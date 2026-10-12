@@ -11,7 +11,7 @@ const exec = promisify(execFile);
 let root: string;
 
 beforeAll(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-gc-tar-"));
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-janitor-tar-"));
 });
 afterAll(async () => {
   await fs.rm(root, { recursive: true, force: true });

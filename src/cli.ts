@@ -41,10 +41,10 @@ const FLAGS: FlagSpec[] = [
   { name: "at", type: "string" },
 ];
 
-const HELP = `agent-gc ${VERSION} — cross-agent guardian for your machine
+const HELP = `agent-janitor ${VERSION} — cross-agent guardian for your machine
 
 USAGE
-  agent-gc <command> [options]
+  agent-janitor <command> [options]
 
 COMMANDS
   scan                 Read-only survey; prints the machine receipt
@@ -75,10 +75,10 @@ OPTIONS
   --at <HH:MM>         Weekly watch time (install, default 12:00)
 
 RESTORE
-  agent-gc restore --list                  show archived batches
-  agent-gc restore latest                  restore the most recent batch
-  agent-gc restore 9b97c704                restore any batch containing "9b97c704"
-  agent-gc restore strike-api --dry-run    preview restoring a project's sessions
+  agent-janitor restore --list                  show archived batches
+  agent-janitor restore latest                  restore the most recent batch
+  agent-janitor restore 9b97c704                restore any batch containing "9b97c704"
+  agent-janitor restore strike-api --dry-run    preview restoring a project's sessions
 `;
 
 function resolveHome(args: ReturnType<typeof parseArgs>): string {
@@ -201,7 +201,7 @@ async function commandClean(args: ReturnType<typeof parseArgs>): Promise<number>
     );
     if (outcome.manifest) {
       process.stdout.write(`Manifest: ${outcome.manifest}\n`);
-      process.stdout.write(`Undo with: agent-gc restore "${outcome.manifest}"\n`);
+      process.stdout.write(`Undo with: agent-janitor restore "${outcome.manifest}"\n`);
     }
     if (outcome.skipped.length > 0) {
       process.stdout.write(`Skipped ${outcome.skipped.length} item(s) (safety).\n`);
@@ -222,7 +222,7 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
       process.stdout.write("No archives found.\n");
       return 0;
     }
-    process.stdout.write("\nagent-gc · archived\n" + "─".repeat(60) + "\n");
+    process.stdout.write("\nagent-janitor · archived\n" + "─".repeat(60) + "\n");
     for (const record of records.slice().reverse()) {
       const items = record.manifest.entries.filter((e) => e.action === "archive");
       const bytes = items.reduce((sum, e) => sum + e.bytes, 0);
@@ -241,7 +241,7 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
   const target = args.positionals[0];
   if (!target) {
     process.stderr.write(
-      "usage: agent-gc restore <manifest|latest|query> [--list] [--dry-run] [--force]\n",
+      "usage: agent-janitor restore <manifest|latest|query> [--list] [--dry-run] [--force]\n",
     );
     return 2;
   }
@@ -263,7 +263,7 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
   } else {
     const outcome = await restoreQuery(home, resolved.query, { force, dryRun, stagingRoot });
     if (outcome.matched === 0) {
-      process.stderr.write(`No archived item matches "${resolved.query}". Try: agent-gc restore --list\n`);
+      process.stderr.write(`No archived item matches "${resolved.query}". Try: agent-janitor restore --list\n`);
       return 1;
     }
     result = outcome;
@@ -294,11 +294,11 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
 
 async function commandInstall(args: ReturnType<typeof parseArgs>): Promise<number> {
   const home = resolveHome(args);
-  const binPath = process.argv[1] ?? "agent-gc";
+  const binPath = process.argv[1] ?? "agent-janitor";
   const at = flagString(args, "at") ?? "12:00";
   const plan = buildSchedule({ home, binPath, at });
 
-  process.stdout.write("\nagent-gc · install\n" + "─".repeat(60) + "\n");
+  process.stdout.write("\nagent-janitor · install\n" + "─".repeat(60) + "\n");
   process.stdout.write("Weekly watch:\n");
   for (const file of plan.files) {
     process.stdout.write(`  write  ${file.path}\n`);
@@ -308,7 +308,7 @@ async function commandInstall(args: ReturnType<typeof parseArgs>): Promise<numbe
     process.stdout.write(`  ${cmd}\n`);
   }
   process.stdout.write("\nPrompt segment (add to your shell prompt):\n");
-  process.stdout.write(`  $(agent-gc prompt)\n`);
+  process.stdout.write(`  $(agent-janitor prompt)\n`);
 
   if (flagBool(args, "apply")) {
     for (const file of plan.files) {
@@ -337,7 +337,7 @@ async function commandWatch(args: ReturnType<typeof parseArgs>): Promise<number>
   };
   await writeJson(cacheFile(home), summary);
   process.stdout.write(
-    `agent-gc watch · reclaimable ${formatBytes(t.reclaimable)}` +
+    `agent-janitor watch · reclaimable ${formatBytes(t.reclaimable)}` +
       (t.secrets > 0 ? ` · ${t.secrets} store(s) may hold secrets` : "") +
       "\n",
   );
@@ -355,7 +355,7 @@ async function commandPrompt(args: ReturnType<typeof parseArgs>): Promise<number
 async function commandDrivers(args: ReturnType<typeof parseArgs>): Promise<number> {
   const home = resolveHome(args);
   const env = buildEnv(args, home);
-  process.stdout.write("\nagent-gc · drivers\n" + "─".repeat(60) + "\n");
+  process.stdout.write("\nagent-janitor · drivers\n" + "─".repeat(60) + "\n");
   for (const driver of DRIVERS) {
     const detected = await driver.detect(env);
     process.stdout.write(`  ${detected ? "✓" : "·"} ${driver.id.padEnd(14)} ${driver.name}\n`);
@@ -408,6 +408,6 @@ main()
     process.exitCode = code;
   })
   .catch((err: unknown) => {
-    process.stderr.write(`agent-gc: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`agent-janitor: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
   });

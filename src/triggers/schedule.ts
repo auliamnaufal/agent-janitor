@@ -22,7 +22,7 @@ function launchdPlist(binPath: string, home: string, hour: number, minute: numbe
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.agent-gc.watch</string>
+  <key>Label</key><string>dev.agent-janitor.watch</string>
   <key>ProgramArguments</key>
   <array>
     <string>${binPath}</string>
@@ -56,7 +56,7 @@ export function buildSchedule(opts: {
   const { hour, minute } = parseAt(opts.at);
 
   if (platform === "darwin") {
-    const file = path.join(opts.home, "Library", "LaunchAgents", "dev.agent-gc.watch.plist");
+    const file = path.join(opts.home, "Library", "LaunchAgents", "dev.agent-janitor.watch.plist");
     return {
       platform,
       files: [{ path: file, content: launchdPlist(opts.binPath, opts.home, hour, minute) }],
@@ -67,14 +67,14 @@ export function buildSchedule(opts: {
   if (platform === "linux") {
     const dir = path.join(opts.home, ".config", "systemd", "user");
     const service = `[Unit]
-Description=agent-gc weekly watch
+Description=agent-janitor weekly watch
 
 [Service]
 Type=oneshot
 ExecStart=${opts.binPath} watch --home ${opts.home}
 `;
     const timer = `[Unit]
-Description=agent-gc weekly watch timer
+Description=agent-janitor weekly watch timer
 
 [Timer]
 OnCalendar=Mon ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}
@@ -86,10 +86,10 @@ WantedBy=timers.target
     return {
       platform,
       files: [
-        { path: path.join(dir, "agent-gc-watch.service"), content: service },
-        { path: path.join(dir, "agent-gc-watch.timer"), content: timer },
+        { path: path.join(dir, "agent-janitor-watch.service"), content: service },
+        { path: path.join(dir, "agent-janitor-watch.timer"), content: timer },
       ],
-      activate: ["systemctl --user daemon-reload", "systemctl --user enable --now agent-gc-watch.timer"],
+      activate: ["systemctl --user daemon-reload", "systemctl --user enable --now agent-janitor-watch.timer"],
     };
   }
 
@@ -97,7 +97,7 @@ WantedBy=timers.target
     platform,
     files: [],
     activate: [
-      `schtasks /Create /SC WEEKLY /D MON /ST ${opts.at} /TN agent-gc-watch /TR "${opts.binPath} watch --home ${opts.home}"`,
+      `schtasks /Create /SC WEEKLY /D MON /ST ${opts.at} /TN agent-janitor-watch /TR "${opts.binPath} watch --home ${opts.home}"`,
     ],
   };
 }

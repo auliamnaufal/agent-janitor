@@ -4,5 +4,5 @@ dist/
 .DS_Store
 coverage/
 *.tsbuildinfo
-.agent-gc-scratch/
+.agent-janitor-scratch/
 .commandcode/

@@ -300,7 +300,7 @@ async function ensureWorktreeRegistered(
   const ref = meta.branch ?? meta.head;
   if (!ref) return false;
 
-  const aside = `${wtPath}.agent-gc-aside`;
+  const aside = `${wtPath}.agent-janitor-aside`;
   try {
     await fs.rename(wtPath, aside);
   } catch {

@@ -1,14 +1,18 @@
 {
-  "name": "agent-gc",
+  "name": "agent-janitor",
   "version": "0.0.1",
   "description": "Cross-agent guardian: inspect, classify, and safely reclaim what AI coding agents leave on your machine.",
   "type": "module",
   "bin": {
-    "agent-gc": "./dist/cli.js"
+    "agent-janitor": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "README.md",
@@ -19,6 +23,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
     "dev": "node --watch --experimental-strip-types src/cli.ts",
     "start": "node --experimental-strip-types src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -27,15 +32,28 @@
   },
   "keywords": [
     "ai-agents",
+    "agent",
     "claude-code",
     "codex",
     "cursor",
+    "gemini",
     "disk-space",
     "cleanup",
+    "garbage-collection",
+    "secrets",
     "cli",
     "worktrees"
   ],
+  "author": "auliamnaufal <auliamnaufal@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/auliamnaufal/agent-janitor.git"
+  },
+  "homepage": "https://github.com/auliamnaufal/agent-janitor#readme",
+  "bugs": {
+    "url": "https://github.com/auliamnaufal/agent-janitor/issues"
+  },
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.0",

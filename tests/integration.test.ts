@@ -10,7 +10,7 @@ import type { Env } from "../src/engine/types.js";
 let home: string;
 
 beforeEach(async () => {
-  home = await fs.mkdtemp(path.join(os.tmpdir(), "agent-gc-home-"));
+  home = await fs.mkdtemp(path.join(os.tmpdir(), "agent-janitor-home-"));
   await fs.mkdir(path.join(home, ".claude", "projects", "proj"), { recursive: true });
   await fs.writeFile(path.join(home, ".claude", "projects", "proj", "s1.jsonl"), "transcript");
   await fs.writeFile(path.join(home, ".claude", "settings.json"), "{}");
@@ -50,7 +50,7 @@ describe("scan → act → restore", () => {
     expect(await exists(path.join(home, ".claude", "settings.json"))).toBe(true);
 
     const restored = await restore(outcome.manifest as string, {
-      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+      stagingRoot: path.join(home, ".agent-janitor", "tmp"),
     });
     expect(restored.restored).toHaveLength(1);
     expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(true);
@@ -89,7 +89,7 @@ describe("scan → act → restore", () => {
     expect(outcome.archived.length).toBeGreaterThan(1);
 
     const restored = await restoreQuery(home, "s1.jsonl", {
-      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+      stagingRoot: path.join(home, ".agent-janitor", "tmp"),
     });
     expect(restored.matched).toBe(1);
     expect(restored.restored).toHaveLength(1);
@@ -101,7 +101,7 @@ describe("scan → act → restore", () => {
     const result = await scan(env, { only: ["claude-code"] });
     const outcome = await act(result.findings, { prune: false, env, home });
     const preview = await restore(outcome.manifest as string, {
-      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+      stagingRoot: path.join(home, ".agent-janitor", "tmp"),
       dryRun: true,
     });
     expect(preview.restored.length).toBeGreaterThan(0);

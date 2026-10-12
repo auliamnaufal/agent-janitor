@@ -1,18 +1,18 @@
-# agent-gc
+# agent-janitor
 
 **The cross-agent guardian for your machine.** AI coding agents quietly litter your
 home directory — session transcripts, duplicate worktrees, scratchpads, install caches,
-trace files. `agent-gc` finds it all, classifies what's safe to remove versus what
+trace files. `agent-janitor` finds it all, classifies what's safe to remove versus what
 carries state, and reclaims it safely — with a receipt you can actually read.
 
-Unlike the other tools in this space, `agent-gc` doesn't wait for you to remember to
+Unlike the other tools in this space, `agent-janitor` doesn't wait for you to remember to
 run it. It's designed to be *wired in*: a shell-prompt segment, a weekly digest, a
 gate before you push.
 
 ```
-$ agent-gc scan
+$ agent-janitor scan
 
-agent-gc · machine receipt
+agent-janitor · machine receipt
 ──────────────────────────────────────────────────────────────────────
 AGENT         KIND         SIZE     TOUCHED   VERDICT     NOTE
 claude-code   transcript   38.2 GB  12d ago   archive     secret-bearing
@@ -31,20 +31,20 @@ plaintext secrets — and "when did the agent create this, and is it safe to del
 is a question nobody can answer. Generic cleaners (BleachBit, Czkawka) don't know
 agent layouts. Agent-specific cleaners only handle one tool.
 
-`agent-gc` is cross-agent by construction: the engine holds **zero** agent-specific
+`agent-janitor` is cross-agent by construction: the engine holds **zero** agent-specific
 logic. Every agent is a **driver** that knows its own layout and classification rules.
 
 ## Install
 
 ```bash
-npx agent-gc scan          # zero-install, read-only
-npx agent-gc clean         # archive what's safe, after a receipt
+npx agent-janitor scan          # zero-install, read-only
+npx agent-janitor clean         # archive what's safe, after a receipt
 ```
 
 Or build a local binary:
 
 ```bash
-git clone https://github.com/<you>/agent-gc && cd agent-gc
+git clone https://github.com/<you>/agent-janitor && cd agent-janitor
 npm install && npm run build && npm link
 ```
 
@@ -52,24 +52,24 @@ npm install && npm run build && npm link
 
 | Command | What it does |
 |---|---|
-| `agent-gc scan` | Read-only survey. Sizes every store, classifies each item, and content-scans transcripts for secrets. `--json` for scripting. |
-| `agent-gc clean` | Archives everything it acts on to a restorable tarball, after showing the receipt. `--days N` sets retention (default 30). `--prune` also deletes *regenerable* caches. |
-| `agent-gc restore <what>` | Get archived items back: a manifest path, `latest`, `--list`, or a session-id/project **query**. `--dry-run` previews. |
-| `agent-gc install` | Wires the recurring surfaces (shell segment, weekly digest, repo gate). |
-| `agent-gc watch` | Headless run for the scheduler. Writes the cached summary the prompt reads. |
-| `agent-gc drivers` | Lists supported agents and whether each is detected on this machine. |
+| `agent-janitor scan` | Read-only survey. Sizes every store, classifies each item, and content-scans transcripts for secrets. `--json` for scripting. |
+| `agent-janitor clean` | Archives everything it acts on to a restorable tarball, after showing the receipt. `--days N` sets retention (default 30). `--prune` also deletes *regenerable* caches. |
+| `agent-janitor restore <what>` | Get archived items back: a manifest path, `latest`, `--list`, or a session-id/project **query**. `--dry-run` previews. |
+| `agent-janitor install` | Wires the recurring surfaces (shell segment, weekly digest, repo gate). |
+| `agent-janitor watch` | Headless run for the scheduler. Writes the cached summary the prompt reads. |
+| `agent-janitor drivers` | Lists supported agents and whether each is detected on this machine. |
 
 ## Getting a session back
 
-Archiving a transcript removes it from the agent's resume list — so `agent-gc` makes
+Archiving a transcript removes it from the agent's resume list — so `agent-janitor` makes
 finding it again a one-liner. You don't need to remember which batch it went into:
 
 ```bash
-agent-gc restore --list          # what's archived, with dates and sizes
-agent-gc restore 9b97c704        # restore any archived session matching this id
-agent-gc restore strike-api      # …or a project name
-agent-gc restore latest          # restore the most recent batch
-agent-gc restore strike-api --dry-run   # preview first
+agent-janitor restore --list          # what's archived, with dates and sizes
+agent-janitor restore 9b97c704        # restore any archived session matching this id
+agent-janitor restore strike-api      # …or a project name
+agent-janitor restore latest          # restore the most recent batch
+agent-janitor restore strike-api --dry-run   # preview first
 ```
 
 Restore is selective (one session out of a batch) and the archive index stays accurate:
@@ -77,7 +77,7 @@ once everything in a batch is back, the tarball is cleaned up automatically. To 
 archive something in the first place, protect it at clean time:
 
 ```bash
-agent-gc clean --keep "important-project" --keep 9b97c704
+agent-janitor clean --keep "important-project" --keep 9b97c704
 ```
 
 ## Supported agents
@@ -94,7 +94,7 @@ Adding an agent is one file implementing the `Driver` interface — see
 
 ## Safety model
 
-`agent-gc` deletes files for a living, so it is conservative by design. These are
+`agent-janitor` deletes files for a living, so it is conservative by design. These are
 **invariants enforced in code**, not documentation promises:
 
 1. **Read-only unless told otherwise.** `scan` never writes. `clean` requires the receipt and an explicit action.
@@ -113,11 +113,13 @@ exposure — it does not redact.
 
 ## How it differs from the rest
 
-The space is not empty — that's the point. `ai-log-clean` trims session logs;
-`agent-footprint` is a footprint dashboard; `clean-my-agent` is a desktop app;
-`clean-worktrees` handles worktrees; `agent-leaks` redacts transcript secrets.
-**None of them unify the full surface into one CLI that runs itself.** That's the gap
-`agent-gc` targets. See [`docs/DESIGN.md`](docs/DESIGN.md) for the honest landscape.
+The space is not empty — that's the point. `williamjeong2/agent-gc` is a Rust/TUI
+worktree-and-artifact GC (the closest rival, and the npm name we had to move off);
+`ai-log-clean` trims session logs; `agent-footprint` is a footprint dashboard;
+`clean-my-agent` is a desktop app; `clean-worktrees` handles worktrees; `agent-leaks`
+redacts transcript secrets. **None of them unify the full surface into one CLI that runs
+itself.** That's the gap `agent-janitor` targets. See [`docs/DESIGN.md`](docs/DESIGN.md)
+for the honest landscape.
 
 ## Non-goals
 

@@ -1,4 +1,4 @@
-# agent-gc — Design
+# agent-janitor — Design
 
 ## 1. The problem
 
@@ -20,6 +20,7 @@ so we name them first.
 
 | Tool | Surface | Form | Gap it leaves |
 |---|---|---|---|
+| `williamjeong2/agent-gc` | worktrees + dev artifacts | Rust / TUI CLI | closest rival (and the npm name we had to move off); TUI-first, no archive/restore, no secret surfacing |
 | `ishizakahiroshi/ai-log-clean` | session logs (7+ agents) | CLI | logs only; no worktrees/caches; silent headless schedule |
 | `jvroth18/agent-footprint` | footprint + worktrees + caches + procs | Python dashboard | deliberately **excludes transcripts**; manual |
 | `blain3white/clean-my-agent` | sessions (5 agents) | Electron app | GUI, not CLI; session-scoped |
@@ -40,7 +41,7 @@ into **one composable CLI** whose headline feature is the **safety model**, and 
 Disk cleanup is an *episodic* need; a one-shot tool churns. Adoption here comes from
 **trigger + surface + shareability**, not from feature depth:
 
-- **Zero-install:** `npx agent-gc` (no runtime deps) / `brew install`.
+- **Zero-install:** `npx agent-janitor` (no runtime deps) / `brew install`.
 - **Runs itself:** `install` wires a shell-prompt segment, a weekly digest, a repo gate.
 - **Shareable:** a redacted receipt designed to be screenshotted.
 
@@ -136,11 +137,11 @@ stays truthful; a batch whose archive entries are all restored removes its own t
 
 | Surface | Cadence | Mechanism |
 |---|---|---|
-| shell prompt segment | every prompt | `agent-gc prompt` reads cached summary (no scan) |
+| shell prompt segment | every prompt | `agent-janitor prompt` reads cached summary (no scan) |
 | weekly digest | weekly | `watch` via launchd / systemd --user / Task Scheduler |
 | repo gate | on push | `pre-push` warns on orphaned worktrees / stray agent artifacts |
 
-`install` **prints** what it will register and writes files under `~/.agent-gc/`; it does
+`install` **prints** what it will register and writes files under `~/.agent-janitor/`; it does
 not silently modify system schedulers unless given `--apply`.
 
 ## 8. Non-goals

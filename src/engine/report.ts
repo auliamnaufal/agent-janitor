@@ -78,7 +78,7 @@ export function renderScan(result: ScanResult, env: Env): string {
   const rows = aggregate(result.findings);
   const lines: string[] = [];
   lines.push("");
-  lines.push("agent-gc · machine receipt");
+  lines.push("agent-janitor · machine receipt");
   lines.push(SEPARATOR);
 
   if (rows.length === 0) {
@@ -128,7 +128,7 @@ export function renderScan(result: ScanResult, env: Env): string {
   );
   lines.push(
     "  " +
-      "scan is read-only · run `agent-gc clean` to archive safely · `--json` to script",
+      "scan is read-only · run `agent-janitor clean` to archive safely · `--json` to script",
   );
   lines.push("");
   return lines.join("\n");
@@ -150,7 +150,7 @@ export function renderPlan(plan: Plan, env: Env, opts: { dryRun: boolean; limit?
   const limit = opts.limit ?? 40;
   const lines: string[] = [];
   lines.push("");
-  lines.push(opts.dryRun ? "agent-gc · clean (dry run)" : "agent-gc · clean");
+  lines.push(opts.dryRun ? "agent-janitor · clean (dry run)" : "agent-janitor · clean");
   lines.push(SEPARATOR);
 
   const active = plan.items.filter((i) => i.action !== "skip");
@@ -188,7 +188,7 @@ export function renderPlan(plan: Plan, env: Env, opts: { dryRun: boolean; limit?
     lines.push(`  skipped: ${parts.join(" · ")}`);
   }
   lines.push(
-    "  archive is restorable (`agent-gc restore <manifest>`) · prune deletes regenerable caches only",
+    "  archive is restorable (`agent-janitor restore <manifest>`) · prune deletes regenerable caches only",
   );
   lines.push("");
   return lines.join("\n");

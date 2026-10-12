@@ -17,7 +17,7 @@ export interface ArchivedItem {
   entry: ManifestEntry;
 }
 
-/** Read every manifest under `<home>/.agent-gc/manifests`, oldest first. */
+/** Read every manifest under `<home>/.agent-janitor/manifests`, oldest first. */
 export async function listManifests(home: string): Promise<ManifestRecord[]> {
   const dir = manifestDir(home);
   const files = (await fs.readdir(dir).catch(() => [] as string[]))

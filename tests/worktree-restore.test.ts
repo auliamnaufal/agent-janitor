@@ -50,7 +50,7 @@ describe("worktree archive → prune → restore", () => {
     expect(await gitWorktreePaths(repo)).not.toContain(wt());
 
     const result = await restore(outcome.manifest as string, {
-      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+      stagingRoot: path.join(home, ".agent-janitor", "tmp"),
     });
 
     expect(result.restored).toContain(wt());
