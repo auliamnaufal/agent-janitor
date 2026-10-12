@@ -1,6 +1,6 @@
 {
   "name": "agent-janitor",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Cross-agent guardian: inspect, classify, and safely reclaim what AI coding agents leave on your machine.",
   "type": "module",
   "bin": {
