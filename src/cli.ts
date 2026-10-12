@@ -331,8 +331,12 @@ async function main(): Promise<number> {
 }
 
 main()
-  .then((code) => process.exit(code))
+  .then((code) => {
+    // Set exitCode instead of process.exit(): calling exit() truncates large
+    // piped stdout (e.g. `scan --json`) before it flushes.
+    process.exitCode = code;
+  })
   .catch((err: unknown) => {
     process.stderr.write(`agent-gc: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    process.exitCode = 1;
   });
