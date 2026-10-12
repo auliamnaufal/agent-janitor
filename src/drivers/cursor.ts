@@ -10,8 +10,10 @@ const LAYOUT: LayoutEntry[] = [
     sub: "chats",
     kind: "transcript",
     verdict: "reclaimable",
+    perFile: true,
+    match: (name) => /\.(json|jsonl|db)$/.test(name),
     secretRisk: "possible",
-    reason: "chat session state",
+    reason: "chat session",
   },
   { sub: "logs", kind: "log", verdict: "regenerable", reason: "logs" },
 ];

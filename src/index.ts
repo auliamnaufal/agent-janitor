@@ -37,6 +37,7 @@ export { guard, desiredAction, planFindings, isProtectedPath, PRUNEABLE, DEFAULT
 export { enrichSecrets, scanFileForSecrets, scanTextForSecrets, riskFromHits, type FileScanOptions } from "./engine/secrets.js";
 export { writeTarGz, extractTarGz, safeTarget } from "./engine/archive.js";
 export { DRIVERS, getDriver } from "./drivers/registry.js";
+export { opencodeDataDir } from "./drivers/opencode.js";
 export {
   changedFiles,
   defaultChanged,

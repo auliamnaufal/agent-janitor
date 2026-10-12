@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Local markdown — issues live as files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+GitHub Issues for this repo, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 

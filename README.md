@@ -106,7 +106,9 @@ agent-janitor guard --strict           # what the pre-push hook runs
 |---|---|
 | `claude-code` | `~/.claude` — session transcripts, debug/state/cache |
 | `codex` | `~/.codex` — rollout sessions, logs |
-| `cursor` | `~/.cursor` — chat/session state |
+| `cursor` | `~/.cursor` — chat/session state (per-file) |
+| `gemini` | `~/.gemini` — session transcripts, credentials |
+| `opencode` | `~/Library/Application Support/opencode` (macOS), `~/.local/share/opencode`, `%APPDATA%/opencode` |
 | `git-worktrees` | agent-created worktrees across repos under your scan roots |
 
 Adding an agent is one file implementing the `Driver` interface — see
