@@ -1,5 +1,10 @@
 # agent-janitor
 
+[![npm version](https://img.shields.io/npm/v/agent-janitor.svg)](https://www.npmjs.com/package/agent-janitor)
+[![CI](https://github.com/auliamnaufal/agent-janitor/actions/workflows/ci.yml/badge.svg)](https://github.com/auliamnaufal/agent-janitor/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/agent-janitor.svg)](LICENSE)
+[![node](https://img.shields.io/node/v/agent-janitor.svg)](package.json)
+
 **The cross-agent guardian for your machine.** AI coding agents quietly litter your
 home directory — session transcripts, duplicate worktrees, scratchpads, install caches,
 trace files. `agent-janitor` finds it all, classifies what's safe to remove versus what
