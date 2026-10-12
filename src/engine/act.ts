@@ -14,7 +14,12 @@ import type {
   Plan,
   PlannedFinding,
 } from "./types.js";
-import { isWorktreeClean } from "../drivers/worktrees.js";
+import {
+  gitWorktreeAdd,
+  gitWorktreePaths,
+  gitWorktreePrune,
+  isWorktreeClean,
+} from "../drivers/worktrees.js";
 
 export function buildPlan(
   findings: Finding[],
@@ -129,12 +134,25 @@ export async function act(findings: Finding[], opts: ActOptions): Promise<ActRes
         });
         continue;
       }
+      // A removed worktree leaves a dangling git registration behind: prune it.
+      if (item.kind === "worktree" && item.gitRepo) {
+        await gitWorktreePrune(item.gitRepo);
+      }
       archived.push({
         path: item.path,
         bytes: item.bytes,
         verdict: item.verdict,
         storedAs: storedName(i, item.path),
         action: "archive",
+        ...(item.kind === "worktree" && item.gitRepo
+          ? {
+              worktree: {
+                repo: item.gitRepo,
+                branch: item.gitBranch ?? null,
+                head: item.gitHead ?? null,
+              },
+            }
+          : {}),
       });
     }
   }
@@ -250,12 +268,54 @@ export async function restoreItems(
         await fs.cp(src, item.entry.path, { recursive: true });
         await fs.rm(src, { recursive: true, force: true });
       }
+      if (item.entry.worktree) {
+        const ok = await ensureWorktreeRegistered(item.entry.worktree, item.entry.path);
+        if (!ok) {
+          skipped.push({
+            path: item.entry.path,
+            reason: "restored but not re-registered with git",
+          });
+        }
+      }
       restored.push(item.entry.path);
     }
   }
 
   if (!opts.dryRun) await fs.rm(staging, { recursive: true, force: true });
   return { restored, skipped };
+}
+
+/**
+ * Ensure a restored worktree directory is registered with git again. Moves the
+ * dir aside, re-adds the worktree from its recorded branch/head, then overlays
+ * the archived files onto the fresh checkout.
+ */
+async function ensureWorktreeRegistered(
+  meta: { repo: string; branch: string | null; head: string | null },
+  wtPath: string,
+): Promise<boolean> {
+  const registered = await gitWorktreePaths(meta.repo);
+  if (registered.includes(wtPath)) return true;
+
+  const ref = meta.branch ?? meta.head;
+  if (!ref) return false;
+
+  const aside = `${wtPath}.agent-gc-aside`;
+  try {
+    await fs.rename(wtPath, aside);
+  } catch {
+    return false;
+  }
+
+  const added = await gitWorktreeAdd(meta.repo, wtPath, ref, meta.branch === null);
+  if (!added) {
+    await fs.rename(aside, wtPath).catch(() => undefined);
+    return false;
+  }
+
+  await fs.cp(aside, wtPath, { recursive: true, force: true });
+  await fs.rm(aside, { recursive: true, force: true });
+  return true;
 }
 
 /** Restore every archived item recorded in one manifest. */

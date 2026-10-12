@@ -106,9 +106,10 @@ Adding an agent is one file implementing the `Driver` interface — see
 7. **Secrets stay private.** Archives are written `0600` (dir `0700`), and `restore` refuses `../` members in a tarball.
 8. **Every run is reversible.** `restore <manifest>` undoes a batch.
 
-Secrets are detected by content, not by filename: `scan` reads the head of each transcript
-and flags known credential shapes (AWS, Anthropic, OpenAI, GitHub, Google, Slack, Stripe,
-private keys, JWTs). It **surfaces** exposure — it does not redact.
+Secrets are detected by content, not by filename: `scan` reads the head and tail of each
+transcript (1 MB / 256 KB; widen with `--scan-bytes`) and flags known credential shapes
+(AWS, Anthropic, OpenAI, GitHub, Google, Slack, Stripe, private keys, JWTs). It **surfaces**
+exposure — it does not redact.
 
 ## How it differs from the rest
 

@@ -93,10 +93,11 @@ interface Finding {
 | `stateful` | config, auth, indexes | **never touched** |
 
 `secretRisk` is a **content-based** heuristic for scannable kinds (transcripts, scratch,
-logs): `scan` reads the head of each file and matches known credential shapes. Credential
-files (`auth.json`, `.credentials.json`) are flagged by name. It exists to surface, not to
-redact. It reads only the first 256 KB per file, so a secret late in a huge transcript may
-be missed — deliberately bounded, and adjustable (`enrichSecrets({ maxBytes })`).
+logs): `scan` reads the head *and* tail of each file and matches known credential shapes.
+Credential files (`auth.json`, `.credentials.json`) are flagged by name. It exists to
+surface, not to redact. The window defaults to 1 MB head + 256 KB tail (`--scan-bytes`
+widens it); a secret buried in the middle of a very large file can still be missed —
+deliberately bounded for speed.
 
 ### Retention
 

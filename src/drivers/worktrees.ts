@@ -10,6 +10,7 @@ const exec = promisify(execFile);
 interface Worktree {
   path: string;
   branch: string | null;
+  head: string | null;
 }
 
 export function parseWorktreePorcelain(out: string): Worktree[] {
@@ -21,13 +22,15 @@ export function parseWorktreePorcelain(out: string): Worktree[] {
   for (const block of blocks) {
     let wtPath: string | null = null;
     let branch: string | null = null;
+    let head: string | null = null;
     for (const line of block.split("\n")) {
       if (line.startsWith("worktree ")) wtPath = line.slice("worktree ".length).trim();
       else if (line.startsWith("branch "))
         branch = line.slice("branch ".length).trim().replace("refs/heads/", "");
+      else if (line.startsWith("HEAD ")) head = line.slice("HEAD ".length).trim();
       else if (line.startsWith("detached")) branch = null;
     }
-    if (wtPath) result.push({ path: wtPath, branch });
+    if (wtPath) result.push({ path: wtPath, branch, head });
   }
   return result;
 }
@@ -48,6 +51,41 @@ export async function isWorktreeClean(dir: string): Promise<boolean> {
   try {
     const { stdout } = await exec("git", ["-C", dir, "status", "--porcelain"], { timeout: 5000 });
     return stdout.trim().length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Drop registrations whose working directory is gone. */
+export async function gitWorktreePrune(repo: string): Promise<void> {
+  await exec("git", ["-C", repo, "worktree", "prune"], { timeout: 10000 }).catch(() => undefined);
+}
+
+/** All worktree paths registered in a repo (including the main tree). */
+export async function gitWorktreePaths(repo: string): Promise<string[]> {
+  try {
+    const { stdout } = await exec("git", ["-C", repo, "worktree", "list", "--porcelain"], {
+      timeout: 5000,
+    });
+    return parseWorktreePorcelain(stdout).map((w) => w.path);
+  } catch {
+    return [];
+  }
+}
+
+/** Re-register a worktree. `detach` is used when no branch is known. */
+export async function gitWorktreeAdd(
+  repo: string,
+  wtPath: string,
+  ref: string,
+  detach: boolean,
+): Promise<boolean> {
+  const args = ["-C", repo, "worktree", "add"];
+  if (detach) args.push("--detach");
+  args.push(wtPath, ref);
+  try {
+    await exec("git", args, { timeout: 20000 });
+    return true;
   } catch {
     return false;
   }
@@ -104,6 +142,9 @@ export const gitWorktrees: Driver = {
             mtimeMs: m.mtimeMs,
             verdict: "reclaimable",
             secretRisk: "none",
+            gitRepo: repo,
+            gitBranch: wt.branch,
+            gitHead: wt.head,
             reason: wt.branch ? `worktree on ${wt.branch}` : "detached worktree",
           });
         }

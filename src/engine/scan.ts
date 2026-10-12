@@ -17,7 +17,7 @@ export interface ScanResult {
 
 export async function scan(
   env: Env,
-  opts: { only?: string[]; secrets?: boolean } = {},
+  opts: { only?: string[]; secrets?: boolean; scanBytes?: number } = {},
 ): Promise<ScanResult> {
   let drivers: Driver[] = DRIVERS;
   if (opts.only && opts.only.length > 0) {
@@ -49,6 +49,14 @@ export async function scan(
     });
   }
 
-  const enriched = opts.secrets === false ? findings : await enrichSecrets(findings);
+  const enriched =
+    opts.secrets === false
+      ? findings
+      : await enrichSecrets(
+          findings,
+          opts.scanBytes !== undefined
+            ? { maxBytes: opts.scanBytes, tailBytes: opts.scanBytes }
+            : {},
+        );
   return { findings: enriched, drivers: statuses };
 }

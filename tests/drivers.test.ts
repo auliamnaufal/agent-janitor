@@ -16,13 +16,17 @@ describe("parseWorktreePorcelain", () => {
 
     const trees = parseWorktreePorcelain(out);
     expect(trees).toHaveLength(2);
-    expect(trees[0]).toEqual({ path: "/repo", branch: "main" });
-    expect(trees[1]).toEqual({ path: "/repo/.wt/feature", branch: "feat/x" });
+    expect(trees[0]).toEqual({ path: "/repo", branch: "main", head: "abc123" });
+    expect(trees[1]).toEqual({
+      path: "/repo/.wt/feature",
+      branch: "feat/x",
+      head: "def456",
+    });
   });
 
   it("handles detached worktrees", () => {
     const out = "worktree /repo/wt\nHEAD 111\ndetached\n";
     const trees = parseWorktreePorcelain(out);
-    expect(trees[0]).toEqual({ path: "/repo/wt", branch: null });
+    expect(trees[0]).toEqual({ path: "/repo/wt", branch: null, head: "111" });
   });
 });

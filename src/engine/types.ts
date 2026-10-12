@@ -24,6 +24,10 @@ export interface Finding {
   secretRisk: SecretRisk;
   /** Labels of secret patterns matched during the content scan, if any. */
   secretHits?: string[];
+  /** Worktree provenance, set only by the git-worktrees driver. */
+  gitRepo?: string;
+  gitBranch?: string | null;
+  gitHead?: string | null;
   /** Human-readable justification shown in the receipt. */
   reason: string;
 }
@@ -65,6 +69,8 @@ export interface ManifestEntry {
   /** Relative path inside the archive, or null when the item was pruned. */
   storedAs: string | null;
   action: "archive" | "prune";
+  /** For worktrees: how to re-register with git on restore. */
+  worktree?: { repo: string; branch: string | null; head: string | null };
 }
 
 export interface Manifest {

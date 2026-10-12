@@ -43,26 +43,65 @@ export function riskFromHits(hits: string[]): SecretRisk {
   return hits.some((h) => strong.has(h)) ? "likely" : "possible";
 }
 
-/** Read up to `maxBytes` from the head of a file as UTF-8. */
-export async function readHead(filePath: string, maxBytes: number): Promise<string> {
+async function readRange(filePath: string, start: number, length: number): Promise<string> {
+  if (length <= 0) return "";
   const handle = await fs.open(filePath, "r");
   try {
-    const buffer = Buffer.alloc(maxBytes);
-    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
     return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     await handle.close();
   }
 }
 
+export interface FileScanOptions {
+  /** Bytes read from the head. Default 1 MB. */
+  maxBytes?: number;
+  /** Bytes read from the tail when the file is larger than maxBytes. Default 256 KB. */
+  tailBytes?: number;
+}
+
+const DEFAULT_HEAD_BYTES = 1024 * 1024;
+const DEFAULT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * Scan a file for secrets by reading its head and — for files larger than the
+ * head window — its tail too. Bounded and fast; a secret buried in the middle of
+ * a very large file can still be missed (raise `maxBytes` to widen the window).
+ */
+export async function scanFileForSecrets(
+  filePath: string,
+  opts: FileScanOptions = {},
+): Promise<string[]> {
+  const head = opts.maxBytes ?? DEFAULT_HEAD_BYTES;
+  const tail = opts.tailBytes ?? DEFAULT_TAIL_BYTES;
+  const { size } = await fs.stat(filePath);
+  const hits = new Set<string>();
+
+  for (const label of scanTextForSecrets(await readRange(filePath, 0, Math.min(size, head)))) {
+    hits.add(label);
+  }
+  if (size > head) {
+    const start = Math.max(head, size - tail);
+    for (const label of scanTextForSecrets(await readRange(filePath, start, size - start))) {
+      hits.add(label);
+    }
+  }
+  return [...hits];
+}
+
 const CONTENT_KINDS = new Set(["transcript", "scratch", "log", "trace"]);
 
-async function enrichOne(finding: Finding, maxBytes: number): Promise<Finding> {
+async function enrichOne(finding: Finding, opts: FileScanOptions): Promise<Finding> {
   if (!CONTENT_KINDS.has(finding.kind)) return finding;
   try {
-    const text = await readHead(finding.path, maxBytes);
-    const hits = scanTextForSecrets(text);
-    return { ...finding, secretRisk: riskFromHits(hits), ...(hits.length > 0 ? { secretHits: hits } : {}) };
+    const hits = await scanFileForSecrets(finding.path, opts);
+    return {
+      ...finding,
+      secretRisk: riskFromHits(hits),
+      ...(hits.length > 0 ? { secretHits: hits } : {}),
+    };
   } catch {
     return finding;
   }
@@ -70,13 +109,16 @@ async function enrichOne(finding: Finding, maxBytes: number): Promise<Finding> {
 
 /**
  * Replaces the name-based secretRisk with a content-based one for scannable kinds.
- * Runs with bounded concurrency and only reads the head of each file.
+ * Runs with bounded concurrency and only reads the head (and tail) of each file.
  */
 export async function enrichSecrets(
   findings: Finding[],
-  opts: { maxBytes?: number; concurrency?: number } = {},
+  opts: FileScanOptions & { concurrency?: number } = {},
 ): Promise<Finding[]> {
-  const maxBytes = opts.maxBytes ?? 256 * 1024;
+  const scanOpts: FileScanOptions = {};
+  if (opts.maxBytes !== undefined) scanOpts.maxBytes = opts.maxBytes;
+  if (opts.tailBytes !== undefined) scanOpts.tailBytes = opts.tailBytes;
+
   const concurrency = Math.min(opts.concurrency ?? 16, Math.max(1, findings.length));
   const results: Finding[] = new Array(findings.length);
   let cursor = 0;
@@ -86,7 +128,7 @@ export async function enrichSecrets(
       const index = cursor++;
       const finding = findings[index];
       if (!finding) continue;
-      results[index] = await enrichOne(finding, maxBytes);
+      results[index] = await enrichOne(finding, scanOpts);
     }
   };
 

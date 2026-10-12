@@ -8,7 +8,7 @@ import { expandHome, readJson, writeJson } from "./util/fs.js";
 import { formatBytes } from "./util/format.js";
 import { scan } from "./engine/scan.js";
 import { act, buildPlan, restore, restoreQuery } from "./engine/act.js";
-import { listManifests } from "./engine/catalog.js";
+import { classifyRestoreTarget, listManifests } from "./engine/catalog.js";
 import { planToJson, renderPlan, renderScan, scanJson, totals } from "./engine/report.js";
 import { cacheFile, stateDir } from "./engine/paths.js";
 import { DEFAULT_RETENTION_DAYS } from "./engine/safety.js";
@@ -35,6 +35,7 @@ const FLAGS: FlagSpec[] = [
   { name: "grace", type: "number" },
   { name: "days", type: "number" },
   { name: "no-secrets", type: "boolean" },
+  { name: "scan-bytes", type: "number" },
   { name: "max-deletes", type: "number" },
   { name: "limit", type: "number" },
   { name: "at", type: "string" },
@@ -69,6 +70,7 @@ OPTIONS
   --days <n>           Only act on items older than n days (clean, default 30)
   --grace <minutes>    Treat items touched within N min as active (default 15)
   --no-secrets         Skip the content-based secret scan during scan/clean
+  --scan-bytes <n>     Head/tail bytes scanned per file for secrets (default 1 MB / 256 KB)
   --max-deletes <n>    Cap mutations in a single run
   --at <HH:MM>         Weekly watch time (install, default 12:00)
 
@@ -95,6 +97,17 @@ function buildEnv(args: ReturnType<typeof parseArgs>, home: string): Env {
   };
 }
 
+function scanOptions(args: ReturnType<typeof parseArgs>): {
+  only: string[];
+  secrets: boolean;
+  scanBytes?: number;
+} {
+  const only = flagList(args, "only");
+  const secrets = !flagBool(args, "no-secrets");
+  const scanBytes = flagNumber(args, "scan-bytes");
+  return scanBytes !== undefined ? { only, secrets, scanBytes } : { only, secrets };
+}
+
 async function confirm(question: string): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -106,10 +119,7 @@ async function confirm(question: string): Promise<boolean> {
 async function commandScan(args: ReturnType<typeof parseArgs>): Promise<number> {
   const home = resolveHome(args);
   const env = buildEnv(args, home);
-  const result = await scan(env, {
-    only: flagList(args, "only"),
-    secrets: !flagBool(args, "no-secrets"),
-  });
+  const result = await scan(env, scanOptions(args));
   if (flagBool(args, "json")) {
     process.stdout.write(JSON.stringify(scanJson(result, env), null, 2) + "\n");
   } else {
@@ -126,10 +136,7 @@ async function commandClean(args: ReturnType<typeof parseArgs>): Promise<number>
   const retentionDays = flagNumber(args, "days") ?? DEFAULT_RETENTION_DAYS;
   const minAgeMs = retentionDays * 86_400_000;
   const keep = flagList(args, "keep");
-  const result = await scan(env, {
-    only: flagList(args, "only"),
-    secrets: !flagBool(args, "no-secrets"),
-  });
+  const result = await scan(env, scanOptions(args));
   const plan = buildPlan(result.findings, {
     prune,
     now: env.now,
@@ -242,7 +249,8 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
   let result: { restored: string[]; skipped: { path: string; reason: string }[] };
   let matched: number | null = null;
 
-  if (target === "latest") {
+  const resolved = await classifyRestoreTarget(target);
+  if (resolved.kind === "latest") {
     const records = await listManifests(home);
     const newest = records[records.length - 1];
     if (!newest) {
@@ -250,12 +258,12 @@ async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<numbe
       return 1;
     }
     result = await restore(newest.path, { force, dryRun, stagingRoot });
-  } else if (target.endsWith(".json") || target.includes(path.sep)) {
-    result = await restore(target, { force, dryRun, stagingRoot });
+  } else if (resolved.kind === "manifest") {
+    result = await restore(resolved.path, { force, dryRun, stagingRoot });
   } else {
-    const outcome = await restoreQuery(home, target, { force, dryRun, stagingRoot });
+    const outcome = await restoreQuery(home, resolved.query, { force, dryRun, stagingRoot });
     if (outcome.matched === 0) {
-      process.stderr.write(`No archived item matches "${target}". Try: agent-gc restore --list\n`);
+      process.stderr.write(`No archived item matches "${resolved.query}". Try: agent-gc restore --list\n`);
       return 1;
     }
     result = outcome;
@@ -318,10 +326,7 @@ async function commandInstall(args: ReturnType<typeof parseArgs>): Promise<numbe
 async function commandWatch(args: ReturnType<typeof parseArgs>): Promise<number> {
   const home = resolveHome(args);
   const env = buildEnv(args, home);
-  const result = await scan(env, {
-    only: flagList(args, "only"),
-    secrets: !flagBool(args, "no-secrets"),
-  });
+  const result = await scan(env, scanOptions(args));
   const t = totals(result.findings);
   const summary: Summary = {
     generatedAt: new Date(env.now).toISOString(),

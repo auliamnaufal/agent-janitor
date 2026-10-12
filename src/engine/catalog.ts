@@ -1,5 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { exists } from "../util/fs.js";
 import { manifestDir } from "./paths.js";
 import { readManifest } from "./manifest.js";
 import type { Manifest, ManifestEntry } from "./types.js";
@@ -54,4 +55,22 @@ export async function listArchived(home: string): Promise<ArchivedItem[]> {
 export function matchArchived(items: ArchivedItem[], query: string): ArchivedItem[] {
   const q = query.toLowerCase();
   return items.filter((item) => item.entry.path.toLowerCase().includes(q));
+}
+
+export type RestoreTarget =
+  | { kind: "latest" }
+  | { kind: "manifest"; path: string }
+  | { kind: "query"; query: string };
+
+/**
+ * Decide how to interpret a `restore` argument. A manifest is only assumed when
+ * the argument is an *existing* `.json` file; everything else — including paths
+ * that merely contain a separator — is treated as a search query.
+ */
+export async function classifyRestoreTarget(target: string): Promise<RestoreTarget> {
+  if (target === "latest") return { kind: "latest" };
+  if (target.endsWith(".json") && (await exists(target))) {
+    return { kind: "manifest", path: target };
+  }
+  return { kind: "query", query: target };
 }
