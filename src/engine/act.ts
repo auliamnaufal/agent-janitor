@@ -62,6 +62,29 @@ function storedName(index: number, original: string): string {
   return `items/${String(index).padStart(5, "0")}-${base}`;
 }
 
+function manifestEntry(
+  item: PlannedFinding,
+  index: number,
+  action: "archive" | "prune",
+): ManifestEntry {
+  return {
+    path: item.path,
+    bytes: item.bytes,
+    verdict: item.verdict,
+    storedAs: action === "archive" ? storedName(index, item.path) : null,
+    action,
+    ...(item.kind === "worktree" && item.gitRepo
+      ? {
+          worktree: {
+            repo: item.gitRepo,
+            branch: item.gitBranch ?? null,
+            head: item.gitHead ?? null,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * The only function in the codebase that mutates the filesystem. Every candidate
  * passes the safety gate first; archives are written before originals are removed.
@@ -81,7 +104,9 @@ export async function act(findings: Finding[], opts: ActOptions): Promise<ActRes
       skipped.push({ path: item.path, reason: item.skipReason ?? item.reason });
       continue;
     }
-    const decision = await guard(item, opts.env);
+    // Fresh act-time clock: the scan-time mtime can be minutes stale by the
+    // time the user confirms, which would defeat the grace window entirely.
+    const decision = await guard(item, opts.env, Date.now());
     if (!decision.allowed) {
       skipped.push({ path: item.path, reason: decision.reason });
       continue;
@@ -119,8 +144,17 @@ export async function act(findings: Finding[], opts: ActOptions): Promise<ActRes
       const reason = `archive failed: ${e instanceof Error ? e.message : String(e)}`;
       for (const item of archiveItems) skipped.push({ path: item.path, reason });
       archivePath = null;
-      return finalize(opts.home, timestamp, archivePath, archived, pruned, skipped);
+      return finalize(opts.home, timestamp, null, [], [], skipped);
     }
+
+    // Intent manifest, written BEFORE any original is removed: a crash
+    // mid-delete (Ctrl-C, ENOSPC) then still leaves a restorable undo record.
+    await writeManifest(path.join(manifestDir(opts.home), `${timestamp}.json`), {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      archive: archivePath,
+      entries: archiveItems.map((item, i) => manifestEntry(item, i, "archive")),
+    });
 
     for (let i = 0; i < archiveItems.length; i++) {
       const item = archiveItems[i];
@@ -138,22 +172,7 @@ export async function act(findings: Finding[], opts: ActOptions): Promise<ActRes
       if (item.kind === "worktree" && item.gitRepo) {
         await gitWorktreePrune(item.gitRepo);
       }
-      archived.push({
-        path: item.path,
-        bytes: item.bytes,
-        verdict: item.verdict,
-        storedAs: storedName(i, item.path),
-        action: "archive",
-        ...(item.kind === "worktree" && item.gitRepo
-          ? {
-              worktree: {
-                repo: item.gitRepo,
-                branch: item.gitBranch ?? null,
-                head: item.gitHead ?? null,
-              },
-            }
-          : {}),
-      });
+      archived.push(manifestEntry(item, i, "archive"));
     }
   }
 
@@ -187,18 +206,27 @@ async function finalize(
   pruned: ManifestEntry[],
   skipped: Skipped[],
 ): Promise<ActResult> {
-  let manifestPath: string | null = null;
-  if (archived.length > 0 || pruned.length > 0) {
+  const mutated = archived.length > 0 || pruned.length > 0;
+  if (mutated) {
+    // Rewrite with the actual outcome (only the entries that were really
+    // removed) — same path, atomically replaced.
+    const manifestPath = path.join(manifestDir(home), `${timestamp}.json`);
     const manifest: Manifest = {
       version: 1,
       createdAt: new Date().toISOString(),
       archive: archivePath,
       entries: [...archived, ...pruned],
     };
-    manifestPath = path.join(manifestDir(home), `${timestamp}.json`);
     await writeManifest(manifestPath, manifest);
+    return { archive: archivePath, manifest: manifestPath, archived, pruned, skipped };
   }
-  return { archive: archivePath, manifest: manifestPath, archived, pruned, skipped };
+  if (archivePath) {
+    // The archive succeeded but nothing was actually removed (every remove
+    // failed): drop the intent record and its tarball so no state is left.
+    await removePath(path.join(manifestDir(home), `${timestamp}.json`)).catch(() => undefined);
+    await removePath(archivePath);
+  }
+  return { archive: null, manifest: null, archived, pruned, skipped };
 }
 
 export interface RestoreResult {
@@ -230,58 +258,61 @@ export async function restoreItems(
     groups.set(item.archive, group);
   }
 
-  const staging = path.join(opts.stagingRoot, `restore-${Date.now()}`);
+  const staging = path.join(opts.stagingRoot, `restore-${stamp()}`);
   let index = 0;
 
-  for (const [archive, group] of groups) {
-    if (opts.dryRun) {
+  try {
+    for (const [archive, group] of groups) {
+      if (opts.dryRun) {
+        for (const item of group) {
+          if ((await exists(item.entry.path)) && !opts.force) {
+            skipped.push({ path: item.entry.path, reason: "destination exists (use --force)" });
+          } else {
+            restored.push(item.entry.path);
+          }
+        }
+        continue;
+      }
+
+      const sub = path.join(staging, String(index++));
+      await ensureDir(sub);
+      await extractTarGz(archive, sub);
+
       for (const item of group) {
+        const storedAs = item.entry.storedAs;
+        if (storedAs === null) continue;
+        const src = path.join(sub, storedAs);
+        if (!(await exists(src))) {
+          skipped.push({ path: item.entry.path, reason: "missing in archive" });
+          continue;
+        }
         if ((await exists(item.entry.path)) && !opts.force) {
           skipped.push({ path: item.entry.path, reason: "destination exists (use --force)" });
-        } else {
-          restored.push(item.entry.path);
+          continue;
         }
-      }
-      continue;
-    }
-
-    const sub = path.join(staging, String(index++));
-    await ensureDir(sub);
-    await extractTarGz(archive, sub);
-
-    for (const item of group) {
-      const storedAs = item.entry.storedAs;
-      if (storedAs === null) continue;
-      const src = path.join(sub, storedAs);
-      if (!(await exists(src))) {
-        skipped.push({ path: item.entry.path, reason: "missing in archive" });
-        continue;
-      }
-      if ((await exists(item.entry.path)) && !opts.force) {
-        skipped.push({ path: item.entry.path, reason: "destination exists (use --force)" });
-        continue;
-      }
-      await ensureDir(path.dirname(item.entry.path));
-      try {
-        await fs.rename(src, item.entry.path);
-      } catch {
-        await fs.cp(src, item.entry.path, { recursive: true });
-        await fs.rm(src, { recursive: true, force: true });
-      }
-      if (item.entry.worktree) {
-        const ok = await ensureWorktreeRegistered(item.entry.worktree, item.entry.path);
-        if (!ok) {
-          skipped.push({
-            path: item.entry.path,
-            reason: "restored but not re-registered with git",
-          });
+        await ensureDir(path.dirname(item.entry.path));
+        try {
+          await fs.rename(src, item.entry.path);
+        } catch {
+          await fs.cp(src, item.entry.path, { recursive: true });
+          await fs.rm(src, { recursive: true, force: true });
         }
+        if (item.entry.worktree) {
+          const ok = await ensureWorktreeRegistered(item.entry.worktree, item.entry.path);
+          if (!ok) {
+            skipped.push({
+              path: item.entry.path,
+              reason: "restored but not re-registered with git",
+            });
+          }
+        }
+        restored.push(item.entry.path);
       }
-      restored.push(item.entry.path);
     }
+  } finally {
+    // Staging must never leak — even when extraction or a rename throws.
+    if (!opts.dryRun) await fs.rm(staging, { recursive: true, force: true });
   }
-
-  if (!opts.dryRun) await fs.rm(staging, { recursive: true, force: true });
   return { restored, skipped };
 }
 
@@ -313,7 +344,15 @@ async function ensureWorktreeRegistered(
     return false;
   }
 
-  await fs.cp(aside, wtPath, { recursive: true, force: true });
+  try {
+    await fs.cp(aside, wtPath, { recursive: true, force: true });
+  } catch {
+    // The overlay failed but the restored data lives in `aside` — put it back
+    // instead of leaving it stranded (or losing it with the aside dir).
+    await fs.rm(wtPath, { recursive: true, force: true }).catch(() => undefined);
+    await fs.rename(aside, wtPath).catch(() => undefined);
+    return false;
+  }
   await fs.rm(aside, { recursive: true, force: true });
   return true;
 }

@@ -75,4 +75,40 @@ describe("tar.gz round trip", () => {
     const stat = await fs.stat(archive);
     expect(stat.mode & 0o777).toBe(0o600);
   });
+
+  it("throws instead of hanging when the archive file is missing", async () => {
+    const missing = path.join(root, "nope.tar.gz");
+    await expect(
+      extractTarGz(missing, path.join(root, "extract-missing")),
+    ).rejects.toThrow();
+  });
+
+  it("refuses to archive a vanished entry and cleans up the partial tarball", async () => {
+    const ghost = path.join(root, "ghost.txt");
+    await fs.writeFile(ghost, "x");
+    await fs.rm(ghost); // vanish between plan and archive
+
+    const archive = path.join(root, "ghost.tar.gz");
+    await expect(
+      writeTarGz(archive, [{ absPath: ghost, storedAs: "items/00000" }]),
+    ).rejects.toThrow();
+    expect(await exists(archive)).toBe(false);
+  });
+
+  it("round-trips symlinks so restore can bring the link back", async () => {
+    const src = path.join(root, "src-link");
+    await fs.mkdir(src, { recursive: true });
+    await fs.writeFile(path.join(src, "real.txt"), "data");
+    await fs.symlink("real.txt", path.join(src, "link.txt"));
+
+    const archive = path.join(root, "link.tar.gz");
+    const count = await writeTarGz(archive, [{ absPath: src, storedAs: "items/00000" }]);
+    expect(count).toBe(2); // the file and the link
+
+    const dest = path.join(root, "extract-link");
+    const names = await extractTarGz(archive, dest);
+    expect(names).toHaveLength(2);
+    expect(await fs.readlink(path.join(dest, "items/00000/link.txt"))).toBe("real.txt");
+    expect(await fs.readFile(path.join(dest, "items/00000/real.txt"), "utf8")).toBe("data");
+  });
 });

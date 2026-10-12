@@ -17,8 +17,13 @@ export interface SchedulePlan {
 
 function parseAt(at: string): { hour: number; minute: number } {
   const match = /^(\d{1,2}):(\d{2})$/.exec(at.trim());
-  if (!match) return { hour: 12, minute: 0 };
-  return { hour: Number(match[1]), minute: Number(match[2]) };
+  if (!match) throw new Error(`invalid --at "${at}" (expected HH:MM, e.g. 12:00)`);
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  // 99:99 would otherwise be written into a plist/OnCalendar that fails at
+  // activation time with a raw exec error.
+  if (hour > 23 || minute > 59) throw new Error(`invalid --at "${at}" (expected HH:MM, e.g. 12:00)`);
+  return { hour, minute };
 }
 
 function launchdPlist(binPath: string, home: string, hour: number, minute: number): string {

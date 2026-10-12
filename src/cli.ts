@@ -425,7 +425,12 @@ async function commandDrivers(args: ReturnType<typeof parseArgs>): Promise<numbe
   const env = buildEnv(args, home);
   process.stdout.write("\nagent-janitor · drivers\n" + "─".repeat(60) + "\n");
   for (const driver of DRIVERS) {
-    const detected = await driver.detect(env);
+    let detected = false;
+    try {
+      detected = await driver.detect(env);
+    } catch {
+      detected = false;
+    }
     process.stdout.write(`  ${detected ? "✓" : "·"} ${driver.id.padEnd(14)} ${driver.name}\n`);
   }
   process.stdout.write(`\n  home: ${home}\n`);

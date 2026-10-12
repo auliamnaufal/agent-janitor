@@ -76,6 +76,7 @@ function kindLabel(row: Row): string {
 
 export function renderScan(result: ScanResult, env: Env): string {
   const rows = aggregate(result.findings);
+  const failed = result.drivers.filter((d) => d.error);
   const lines: string[] = [];
   lines.push("");
   lines.push("agent-janitor · machine receipt");
@@ -83,7 +84,13 @@ export function renderScan(result: ScanResult, env: Env): string {
 
   if (rows.length === 0) {
     lines.push("");
-    lines.push("  No agent stores found. Either nothing is installed, or your machine is clean.");
+    if (failed.length > 0) {
+      // A failed driver must never look like a clean machine.
+      for (const d of failed) lines.push(`  ! ${d.id}: scan failed — ${d.error}`);
+      lines.push("  Other drivers found no agent stores.");
+    } else {
+      lines.push("  No agent stores found. Either nothing is installed, or your machine is clean.");
+    }
     lines.push("");
     return lines.join("\n");
   }
@@ -130,6 +137,10 @@ export function renderScan(result: ScanResult, env: Env): string {
     "  " +
       "scan is read-only · run `agent-janitor clean` to archive safely · `--json` to script",
   );
+  if (failed.length > 0) {
+    lines.push("");
+    for (const d of failed) lines.push(`  ! ${d.id}: scan failed — ${d.error}`);
+  }
   lines.push("");
   return lines.join("\n");
 }

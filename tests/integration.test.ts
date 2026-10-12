@@ -4,7 +4,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { scan } from "../src/engine/scan.js";
 import { act, restore, restoreQuery } from "../src/engine/act.js";
-import { exists } from "../src/util/fs.js";
+import { exists, stamp } from "../src/util/fs.js";
 import type { Env } from "../src/engine/types.js";
 
 let home: string;
@@ -114,5 +114,13 @@ describe("scan → act → restore", () => {
     const outcome = await act(result.findings, { prune: false, env, home, keep: ["s1.jsonl"] });
     expect(outcome.archived.some((e) => e.path.endsWith("s1.jsonl"))).toBe(false);
     expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(true);
+  });
+
+  it("fails loudly on an unknown --only driver", async () => {
+    await expect(scan(mkEnv(), { only: ["claudecod"] })).rejects.toThrow(/unknown driver/);
+  });
+
+  it("generates collision-proof stamps", () => {
+    expect(stamp()).not.toBe(stamp());
   });
 });

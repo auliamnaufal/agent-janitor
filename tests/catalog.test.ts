@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { classifyRestoreTarget, matchArchived, type ArchivedItem } from "../src/engine/catalog.js";
+import { readManifest } from "../src/engine/manifest.js";
 
 function item(p: string): ArchivedItem {
   return {
@@ -62,5 +63,43 @@ describe("classifyRestoreTarget", () => {
 
   it("treats 'latest' as the latest batch", async () => {
     expect(await classifyRestoreTarget("latest")).toEqual({ kind: "latest" });
+  });
+});
+
+describe("readManifest", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "agc-manifest-"));
+  });
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("accepts a well-formed manifest", async () => {
+    const file = path.join(dir, "good.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        createdAt: "t",
+        archive: null,
+        entries: [{ path: "/x", bytes: 1, verdict: "reclaimable", storedAs: null, action: "prune" }],
+      }),
+    );
+    expect(await readManifest(file)).not.toBeNull();
+  });
+
+  it("rejects malformed entries instead of crashing consumers", async () => {
+    const file = path.join(dir, "bad.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        createdAt: "t",
+        archive: null,
+        entries: [{ bytes: 1, storedAs: null, action: "archive" }],
+      }),
+    );
+    expect(await readManifest(file)).toBeNull();
   });
 });

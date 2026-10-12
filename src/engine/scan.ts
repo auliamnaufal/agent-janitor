@@ -21,6 +21,13 @@ export async function scan(
 ): Promise<ScanResult> {
   let drivers: Driver[] = DRIVERS;
   if (opts.only && opts.only.length > 0) {
+    // A typo in --only would otherwise scan nothing and report a clean machine.
+    const unknown = opts.only.filter((id) => !DRIVERS.some((d) => d.id === id));
+    if (unknown.length > 0) {
+      throw new Error(
+        `unknown driver(s): ${unknown.join(", ")} — available: ${DRIVERS.map((d) => d.id).join(", ")}`,
+      );
+    }
     drivers = opts.only.map(getDriver).filter((d): d is Driver => d !== undefined);
   }
 
@@ -28,10 +35,15 @@ export async function scan(
   const statuses: DriverStatus[] = [];
 
   for (const driver of drivers) {
-    const detected = await driver.detect(env);
     let items: Finding[] = [];
     let error: string | undefined;
-    if (detected) {
+    let detected = false;
+    try {
+      detected = await driver.detect(env);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    if (detected && !error) {
       try {
         items = (await driver.scan(env)).filter((f) => f.bytes > 0);
       } catch (e) {

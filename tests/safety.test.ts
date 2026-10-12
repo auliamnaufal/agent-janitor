@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import {
   applyMaxDeletes,
   DEFAULT_RETENTION_DAYS,
@@ -32,22 +35,51 @@ describe("desiredAction", () => {
 });
 
 describe("guard", () => {
+  let dir: string;
+  let oldFile: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "aj-guard-"));
+    oldFile = path.join(dir, "old.jsonl");
+    await fs.writeFile(oldFile, "x");
+    // The file is genuinely old on disk, whatever the finding claims.
+    const stale = new Date(Date.now() - 40 * 86_400_000);
+    await fs.utimes(oldFile, stale, stale);
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const mkEnv = (graceMs = 0): Env => ({ home: "/tmp", roots: [], now: Date.now(), graceMs });
+
   it("denies stateful stores", async () => {
-    expect((await guard({ ...base, verdict: "stateful" }, env)).allowed).toBe(false);
+    expect((await guard({ ...base, verdict: "stateful" }, mkEnv())).allowed).toBe(false);
   });
 
   it("denies protected paths", async () => {
-    const settings = { ...base, path: "/home/u/.claude/settings.json" };
-    expect((await guard(settings, env)).allowed).toBe(false);
+    const settings = { ...base, path: path.join(dir, "settings.json") };
+    await fs.writeFile(settings.path, "{}");
+    expect((await guard(settings, mkEnv())).allowed).toBe(false);
   });
 
-  it("denies recently-touched items (grace window)", async () => {
-    const recent = { ...base, mtimeMs: env.now - 1_000 };
-    expect((await guard(recent, { ...env, graceMs: 60_000 })).allowed).toBe(false);
+  it("denies recently-touched items (grace window) from fresh disk mtime", async () => {
+    // The finding still carries a stale scan-time mtimeMs (0); the file on
+    // disk is fresh. The gate must trust the disk — this is the scan→confirm→act race.
+    const freshFile = path.join(dir, "fresh.jsonl");
+    await fs.writeFile(freshFile, "x");
+    const fresh = { ...base, path: freshFile, mtimeMs: 0 };
+    expect((await guard(fresh, mkEnv(60_000))).allowed).toBe(false);
   });
 
   it("allows an ordinary old transcript", async () => {
-    expect((await guard(base, env)).allowed).toBe(true);
+    expect((await guard({ ...base, path: oldFile, mtimeMs: 0 }, mkEnv())).allowed).toBe(true);
+  });
+
+  it("denies items that no longer exist", async () => {
+    const gone = { ...base, path: path.join(dir, "deleted.jsonl") };
+    const decision = await guard(gone, mkEnv());
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain("no longer exists");
   });
 });
 

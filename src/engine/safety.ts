@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isLocked } from "../util/fs.js";
+import { freshMtimeMs, isLocked } from "../util/fs.js";
 import type { Action, Env, Finding, Plan, PlannedFinding, Verdict } from "./types.js";
 
 /** Default retention: only act on reclaimable items older than this. */
@@ -77,8 +77,12 @@ export function isProtectedPath(p: string): boolean {
  * The safety gate. Every item passes through here *immediately before* mutation.
  * Invariants #3 (no pruning state), #4 (never touch locked/recent), plus a
  * protected-path guard. Returns a reason when denied so the receipt can show it.
+ *
+ * The mtime is re-stat'ed from disk (not trusted from the scan) and compared
+ * against `now` — pass the act-time clock, since the scan-time one can be
+ * minutes stale by the time the user confirms.
  */
-export async function guard(finding: Finding, env: Env): Promise<Decision> {
+export async function guard(finding: Finding, env: Env, now: number = env.now): Promise<Decision> {
   if (finding.verdict === "stateful") {
     return { allowed: false, reason: "stateful store — never touched" };
   }
@@ -88,7 +92,11 @@ export async function guard(finding: Finding, env: Env): Promise<Decision> {
   if (await isLocked(finding.path)) {
     return { allowed: false, reason: "locked (sibling lock present)" };
   }
-  if (env.now - finding.mtimeMs < env.graceMs) {
+  const fresh = await freshMtimeMs(finding.path);
+  if (fresh === null) {
+    return { allowed: false, reason: "no longer exists" };
+  }
+  if (now - fresh < env.graceMs) {
     return { allowed: false, reason: "active — touched within grace window" };
   }
   if (isProtectedPath(finding.path)) {

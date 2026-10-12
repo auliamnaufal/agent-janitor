@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 
@@ -85,18 +86,44 @@ export async function readJson<T>(p: string): Promise<T | null> {
 
 export async function writeJson(p: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(p));
-  await fs.writeFile(p, JSON.stringify(value, null, 2), { mode: 0o600 });
+  // Atomic: write a temp file and rename, so a crash mid-write can never leave
+  // a truncated/corrupt file behind (manifests are the single pointer to the
+  // user's backup).
+  const tmp = `${p}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+    await fs.rename(tmp, p);
+  } catch (e) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw e;
+  }
 }
 
-/** Compact, filesystem-safe timestamp, e.g. "2026-10-12T10-20-30". */
+let stampSeq = 0;
+
+/** Compact, filesystem-safe, collision-proof timestamp, e.g. "2026-10-12T10-20-30-1k4z". */
 export function stamp(d: Date = new Date()): string {
-  return d.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "-");
+  const base = d.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "-");
+  // PID + monotonic counter: two clean runs within the same second (scripted
+  // --yes, overlapping schedulers) would otherwise share an archive filename
+  // and silently clobber each other's tarball.
+  return `${base}-${process.pid}-${(stampSeq++).toString(36)}`;
+}
+
+/** Fresh mtime straight from disk, or null when the path is gone. */
+export async function freshMtimeMs(p: string): Promise<number | null> {
+  try {
+    return (await fs.lstat(p)).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 /** Recursively collect files under `dir`, optionally filtered by name/path. */
 export async function walkFiles(
   dir: string,
   match?: (name: string, full: string) => boolean,
+  includeSymlinks = false,
 ): Promise<string[]> {
   const out: string[] = [];
   async function rec(p: string): Promise<void> {
@@ -110,7 +137,10 @@ export async function walkFiles(
       const full = path.join(p, entry.name);
       if (entry.isDirectory()) {
         await rec(full);
-      } else if (entry.isFile() && (!match || match(entry.name, full))) {
+      } else if (
+        (entry.isFile() || (includeSymlinks && entry.isSymbolicLink())) &&
+        (!match || match(entry.name, full))
+      ) {
         out.push(full);
       }
     }
