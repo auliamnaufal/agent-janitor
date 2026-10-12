@@ -79,4 +79,15 @@ describe("planFindings", () => {
     expect(plan.items[1]?.action).toBe("skip");
     expect(plan.items[1]?.skipReason).toContain("retention");
   });
+
+  it("skips paths matching --keep", () => {
+    const plan = planFindings([base], {
+      prune: false,
+      now: env.now,
+      minAgeMs: 0,
+      keep: ["s.jsonl"],
+    });
+    expect(plan.items[0]?.action).toBe("skip");
+    expect(plan.items[0]?.skipReason).toContain("--keep");
+  });
 });

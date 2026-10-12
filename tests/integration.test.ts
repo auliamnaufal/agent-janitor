@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { scan } from "../src/engine/scan.js";
-import { act, restore } from "../src/engine/act.js";
+import { act, restore, restoreQuery } from "../src/engine/act.js";
 import { exists } from "../src/util/fs.js";
 import type { Env } from "../src/engine/types.js";
 
@@ -79,6 +79,40 @@ describe("scan → act → restore", () => {
     });
     expect(outcome.archived).toHaveLength(0);
     expect(outcome.skipped.some((s) => s.reason.includes("retention"))).toBe(true);
+    expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(true);
+  });
+
+  it("restores a specific archived session by query, not the whole batch", async () => {
+    const env = mkEnv();
+    const result = await scan(env, { only: ["claude-code"] });
+    const outcome = await act(result.findings, { prune: false, env, home });
+    expect(outcome.archived.length).toBeGreaterThan(1);
+
+    const restored = await restoreQuery(home, "s1.jsonl", {
+      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+    });
+    expect(restored.matched).toBe(1);
+    expect(restored.restored).toHaveLength(1);
+    expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(true);
+  });
+
+  it("restore --dry-run restores nothing", async () => {
+    const env = mkEnv();
+    const result = await scan(env, { only: ["claude-code"] });
+    const outcome = await act(result.findings, { prune: false, env, home });
+    const preview = await restore(outcome.manifest as string, {
+      stagingRoot: path.join(home, ".agent-gc", "tmp"),
+      dryRun: true,
+    });
+    expect(preview.restored.length).toBeGreaterThan(0);
+    expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(false);
+  });
+
+  it("honours --keep by never archiving matching paths", async () => {
+    const env = mkEnv();
+    const result = await scan(env, { only: ["claude-code"] });
+    const outcome = await act(result.findings, { prune: false, env, home, keep: ["s1.jsonl"] });
+    expect(outcome.archived.some((e) => e.path.endsWith("s1.jsonl"))).toBe(false);
     expect(await exists(path.join(home, ".claude", "projects", "proj", "s1.jsonl"))).toBe(true);
   });
 });

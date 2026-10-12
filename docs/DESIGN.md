@@ -116,7 +116,22 @@ active work. `--days 0` disables the gate.
 7. Archives are written `0600` (dir `0700`); `extract` refuses path-traversal members.
 8. Reclaimable items newer than the retention window are skipped.
 
-## 6. Triggers
+## 6. Restore & the archive index
+
+Archiving removes a transcript from the agent's resume list, so recovery must be
+*trivial* or the tool is resented. Manifests already record each item's original path, so
+`engine/catalog.ts` reads them all and offers:
+
+- `restore --list` — every batch (date, count, size) and its items.
+- `restore <query>` — substring match on the original path (session id **or** project),
+  restoring only matching items across **all** batches — not just the newest.
+- `restore latest | <manifest>` — a whole batch; `--dry-run` previews.
+
+After a restore, affected manifests are compacted (restored entries dropped) so the index
+stays truthful; a batch whose archive entries are all restored removes its own tarball.
+`clean --keep <substr>` lets users protect specific sessions up front.
+
+## 7. Triggers
 
 | Surface | Cadence | Mechanism |
 |---|---|---|
@@ -127,11 +142,11 @@ active work. `--days 0` disables the gate.
 `install` **prints** what it will register and writes files under `~/.agent-gc/`; it does
 not silently modify system schedulers unless given `--apply`.
 
-## 7. Non-goals
+## 8. Non-goals
 
 Cost tracking, general disk cleaning, a resident daemon, secret *redaction* (surface only).
 
-## 8. Known risks
+## 9. Known risks
 
 - **Misclassifying state as regenerable.** Mitigated by archive-first + allowlist.
 - **Adapter maintenance is forever.** Agent layouts change; the driver registry is a

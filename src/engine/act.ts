@@ -4,6 +4,7 @@ import { exists, ensureDir, stamp } from "../util/fs.js";
 import { extractTarGz, writeTarGz } from "./archive.js";
 import { readManifest, removePath, writeManifest } from "./manifest.js";
 import { archiveDir, manifestDir } from "./paths.js";
+import { listArchived, matchArchived, type ArchivedItem } from "./catalog.js";
 import { applyMaxDeletes, guard, planFindings } from "./safety.js";
 import type {
   Env,
@@ -17,12 +18,13 @@ import { isWorktreeClean } from "../drivers/worktrees.js";
 
 export function buildPlan(
   findings: Finding[],
-  opts: { prune: boolean; now?: number; minAgeMs?: number },
+  opts: { prune: boolean; now?: number; minAgeMs?: number; keep?: string[] },
 ): Plan {
   return planFindings(findings, {
     prune: opts.prune,
     now: opts.now ?? Date.now(),
     minAgeMs: opts.minAgeMs ?? 0,
+    ...(opts.keep ? { keep: opts.keep } : {}),
   });
 }
 
@@ -31,6 +33,8 @@ export interface ActOptions {
   maxDeletes?: number;
   /** Skip reclaimable items newer than this. Default 0 (act on everything). */
   minAgeMs?: number;
+  /** Never archive items whose path contains any of these substrings. */
+  keep?: string[];
   env: Env;
   home: string;
 }
@@ -62,6 +66,7 @@ export async function act(findings: Finding[], opts: ActOptions): Promise<ActRes
     prune: opts.prune,
     now: opts.env.now,
     minAgeMs: opts.minAgeMs ?? 0,
+    ...(opts.keep ? { keep: opts.keep } : {}),
   });
   const skipped: Skipped[] = [];
   const candidates: PlannedFinding[] = [];
@@ -183,45 +188,131 @@ export interface RestoreResult {
   skipped: Skipped[];
 }
 
-export async function restore(
-  manifestPath: string,
-  opts: { force?: boolean; stagingRoot: string },
-): Promise<RestoreResult> {
-  const manifest = await readManifest(manifestPath);
-  if (!manifest) throw new Error(`no valid manifest at ${manifestPath}`);
+export interface RestoreOptions {
+  force?: boolean;
+  dryRun?: boolean;
+  stagingRoot: string;
+}
 
+/**
+ * Restore a set of archived items. Groups by archive so each tarball is
+ * extracted once, then moves each file back to its original path.
+ */
+export async function restoreItems(
+  items: ArchivedItem[],
+  opts: RestoreOptions,
+): Promise<RestoreResult> {
   const restored: string[] = [];
   const skipped: Skipped[] = [];
-  const entries = manifest.entries.filter((e) => e.action === "archive" && e.storedAs !== null);
-  if (!manifest.archive || entries.length === 0) {
-    return { restored, skipped };
+
+  const groups = new Map<string, ArchivedItem[]>();
+  for (const item of items) {
+    const group = groups.get(item.archive) ?? [];
+    group.push(item);
+    groups.set(item.archive, group);
   }
 
   const staging = path.join(opts.stagingRoot, `restore-${Date.now()}`);
-  await ensureDir(staging);
-  await extractTarGz(manifest.archive, staging);
+  let index = 0;
 
-  for (const entry of entries) {
-    if (entry.storedAs === null) continue;
-    const src = path.join(staging, entry.storedAs);
-    if (!(await exists(src))) {
-      skipped.push({ path: entry.path, reason: "missing in archive" });
+  for (const [archive, group] of groups) {
+    if (opts.dryRun) {
+      for (const item of group) {
+        if ((await exists(item.entry.path)) && !opts.force) {
+          skipped.push({ path: item.entry.path, reason: "destination exists (use --force)" });
+        } else {
+          restored.push(item.entry.path);
+        }
+      }
       continue;
     }
-    if ((await exists(entry.path)) && !opts.force) {
-      skipped.push({ path: entry.path, reason: "destination exists (use --force)" });
-      continue;
+
+    const sub = path.join(staging, String(index++));
+    await ensureDir(sub);
+    await extractTarGz(archive, sub);
+
+    for (const item of group) {
+      const storedAs = item.entry.storedAs;
+      if (storedAs === null) continue;
+      const src = path.join(sub, storedAs);
+      if (!(await exists(src))) {
+        skipped.push({ path: item.entry.path, reason: "missing in archive" });
+        continue;
+      }
+      if ((await exists(item.entry.path)) && !opts.force) {
+        skipped.push({ path: item.entry.path, reason: "destination exists (use --force)" });
+        continue;
+      }
+      await ensureDir(path.dirname(item.entry.path));
+      try {
+        await fs.rename(src, item.entry.path);
+      } catch {
+        await fs.cp(src, item.entry.path, { recursive: true });
+        await fs.rm(src, { recursive: true, force: true });
+      }
+      restored.push(item.entry.path);
     }
-    await ensureDir(path.dirname(entry.path));
-    try {
-      await fs.rename(src, entry.path);
-    } catch {
-      await fs.cp(src, entry.path, { recursive: true });
-      await fs.rm(src, { recursive: true, force: true });
-    }
-    restored.push(entry.path);
   }
 
-  await fs.rm(staging, { recursive: true, force: true });
+  if (!opts.dryRun) await fs.rm(staging, { recursive: true, force: true });
   return { restored, skipped };
+}
+
+/** Restore every archived item recorded in one manifest. */
+export async function restore(manifestPath: string, opts: RestoreOptions): Promise<RestoreResult> {
+  const manifest = await readManifest(manifestPath);
+  if (!manifest) throw new Error(`no valid manifest at ${manifestPath}`);
+  if (!manifest.archive) return { restored: [], skipped: [] };
+  const archive = manifest.archive;
+  const items: ArchivedItem[] = manifest.entries
+    .filter((entry) => entry.action === "archive" && entry.storedAs !== null)
+    .map((entry) => ({ manifestPath, archive, entry }));
+
+  const result = await restoreItems(items, opts);
+  if (!opts.dryRun) await compactAfterRestore(items, new Set(result.restored));
+  return result;
+}
+
+/** Restore archived items across all manifests whose original path matches `query`. */
+export async function restoreQuery(
+  home: string,
+  query: string,
+  opts: RestoreOptions,
+): Promise<RestoreResult & { matched: number }> {
+  const items = matchArchived(await listArchived(home), query);
+  const result = await restoreItems(items, opts);
+  if (!opts.dryRun) await compactAfterRestore(items, new Set(result.restored));
+  return { ...result, matched: items.length };
+}
+
+/**
+ * Drop restored entries from their manifests so `--list` stays accurate; remove a
+ * manifest (and its now-empty tarball) once nothing references it.
+ */
+async function compactAfterRestore(
+  items: ArchivedItem[],
+  restoredPaths: Set<string>,
+): Promise<void> {
+  const byManifest = new Map<string, ArchivedItem[]>();
+  for (const item of items) {
+    const group = byManifest.get(item.manifestPath) ?? [];
+    group.push(item);
+    byManifest.set(item.manifestPath, group);
+  }
+
+  for (const [manifestPath, group] of byManifest) {
+    const manifest = await readManifest(manifestPath);
+    if (!manifest) continue;
+    const remaining = manifest.entries.filter(
+      (entry) => !(entry.action === "archive" && restoredPaths.has(entry.path)),
+    );
+    if (remaining.length === manifest.entries.length) continue;
+
+    if (remaining.length === 0) {
+      await removePath(manifestPath);
+      if (manifest.archive) await removePath(manifest.archive);
+    } else {
+      await writeManifest(manifestPath, { ...manifest, entries: remaining });
+    }
+  }
 }

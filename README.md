@@ -54,10 +54,31 @@ npm install && npm run build && npm link
 |---|---|
 | `agent-gc scan` | Read-only survey. Sizes every store, classifies each item, and content-scans transcripts for secrets. `--json` for scripting. |
 | `agent-gc clean` | Archives everything it acts on to a restorable tarball, after showing the receipt. `--days N` sets retention (default 30). `--prune` also deletes *regenerable* caches. |
-| `agent-gc restore <manifest>` | Reverses a previous `clean` from its manifest. |
+| `agent-gc restore <what>` | Get archived items back: a manifest path, `latest`, `--list`, or a session-id/project **query**. `--dry-run` previews. |
 | `agent-gc install` | Wires the recurring surfaces (shell segment, weekly digest, repo gate). |
 | `agent-gc watch` | Headless run for the scheduler. Writes the cached summary the prompt reads. |
 | `agent-gc drivers` | Lists supported agents and whether each is detected on this machine. |
+
+## Getting a session back
+
+Archiving a transcript removes it from the agent's resume list — so `agent-gc` makes
+finding it again a one-liner. You don't need to remember which batch it went into:
+
+```bash
+agent-gc restore --list          # what's archived, with dates and sizes
+agent-gc restore 9b97c704        # restore any archived session matching this id
+agent-gc restore strike-api      # …or a project name
+agent-gc restore latest          # restore the most recent batch
+agent-gc restore strike-api --dry-run   # preview first
+```
+
+Restore is selective (one session out of a batch) and the archive index stays accurate:
+once everything in a batch is back, the tarball is cleaned up automatically. To *never*
+archive something in the first place, protect it at clean time:
+
+```bash
+agent-gc clean --keep "important-project" --keep 9b97c704
+```
 
 ## Supported agents
 

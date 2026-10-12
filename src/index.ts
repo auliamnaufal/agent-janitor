@@ -14,7 +14,22 @@ export type {
 } from "./engine/types.js";
 
 export { scan, type ScanResult, type DriverStatus } from "./engine/scan.js";
-export { act, buildPlan, restore, type ActResult, type RestoreResult } from "./engine/act.js";
+export {
+  act,
+  buildPlan,
+  restore,
+  restoreItems,
+  restoreQuery,
+  type ActResult,
+  type RestoreOptions,
+  type RestoreResult,
+} from "./engine/act.js";
+export {
+  listArchived,
+  listManifests,
+  matchArchived,
+  type ArchivedItem,
+} from "./engine/catalog.js";
 export { aggregate, renderPlan, renderScan, scanJson, totals } from "./engine/report.js";
 export { guard, desiredAction, planFindings, isProtectedPath, PRUNEABLE, DEFAULT_RETENTION_DAYS } from "./engine/safety.js";
 export { enrichSecrets, scanTextForSecrets, riskFromHits } from "./engine/secrets.js";

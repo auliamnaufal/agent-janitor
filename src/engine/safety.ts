@@ -41,17 +41,23 @@ export interface PlanOptions {
   now: number;
   /** Skip reclaimable items newer than this. 0 disables the age gate. */
   minAgeMs: number;
+  /** Never act on items whose path contains any of these substrings. */
+  keep?: string[];
 }
 
 /**
- * Chooses an action per finding. Enforces the retention gate: reclaimable items
- * (transcripts, worktrees) newer than `minAgeMs` are skipped so active or recent
- * work is never archived by accident.
+ * Chooses an action per finding. Enforces the retention gate (reclaimable items
+ * newer than `minAgeMs` are skipped) and honours a user keep-list so specific
+ * sessions or projects are never archived.
  */
 export function planFindings(findings: Finding[], opts: PlanOptions): Plan {
+  const keep = opts.keep?.map((k) => k.toLowerCase()).filter((k) => k.length > 0) ?? [];
   const items: PlannedFinding[] = findings.map((finding) => {
     if (finding.verdict === "stateful") {
       return { ...finding, action: "skip", skipReason: "stateful store — never touched" };
+    }
+    if (keep.length > 0 && keep.some((k) => finding.path.toLowerCase().includes(k))) {
+      return { ...finding, action: "skip", skipReason: "kept (--keep)" };
     }
     if (opts.minAgeMs > 0 && opts.now - finding.mtimeMs < opts.minAgeMs) {
       const days = Math.round(opts.minAgeMs / 86_400_000);

@@ -7,9 +7,10 @@ import { flagBool, flagList, flagNumber, flagString, parseArgs, type FlagSpec } 
 import { expandHome, readJson, writeJson } from "./util/fs.js";
 import { formatBytes } from "./util/format.js";
 import { scan } from "./engine/scan.js";
-import { act, buildPlan, restore } from "./engine/act.js";
+import { act, buildPlan, restore, restoreQuery } from "./engine/act.js";
+import { listManifests } from "./engine/catalog.js";
 import { planToJson, renderPlan, renderScan, scanJson, totals } from "./engine/report.js";
-import { cacheFile, manifestDir, stateDir } from "./engine/paths.js";
+import { cacheFile, stateDir } from "./engine/paths.js";
 import { DEFAULT_RETENTION_DAYS } from "./engine/safety.js";
 import { DRIVERS } from "./drivers/registry.js";
 import { renderPrompt } from "./triggers/shell.js";
@@ -26,9 +27,11 @@ const FLAGS: FlagSpec[] = [
   { name: "yes", type: "boolean", alias: "y" },
   { name: "force", type: "boolean" },
   { name: "apply", type: "boolean" },
+  { name: "list", type: "boolean" },
   { name: "home", type: "string" },
   { name: "root", type: "string", multiple: true },
   { name: "only", type: "string", multiple: true },
+  { name: "keep", type: "string", multiple: true },
   { name: "grace", type: "number" },
   { name: "days", type: "number" },
   { name: "no-secrets", type: "boolean" },
@@ -45,7 +48,7 @@ USAGE
 COMMANDS
   scan                 Read-only survey; prints the machine receipt
   clean                Archive safely (and optionally prune regenerable caches)
-  restore <manifest>   Reverse a previous clean ("latest" for the newest)
+  restore <what>       Restore archived items: a manifest, "latest", or a query
   install              Print/emit the recurring surfaces (prompt, weekly watch)
   watch                Headless run for the scheduler; writes the cached summary
   prompt               Print the shell-prompt segment (reads cache, no scan)
@@ -54,9 +57,11 @@ COMMANDS
 OPTIONS
   --json               Machine-readable output
   --prune              Delete regenerable caches (default: archive only)
-  --dry-run            Show the plan, change nothing
+  --dry-run            Show the plan, change nothing (also for restore)
   --yes, -y            Skip the confirmation prompt
   --force              Overwrite existing files on restore
+  --list               (restore) list archived batches and items
+  --keep <substr>      (clean) never archive paths containing this (repeatable)
   --apply              Actually write scheduler files (install)
   --home <dir>         Override home ($AGENT_GC_HOME)
   --root <dir>         Repo root to scan for worktrees (repeatable)
@@ -66,6 +71,12 @@ OPTIONS
   --no-secrets         Skip the content-based secret scan during scan/clean
   --max-deletes <n>    Cap mutations in a single run
   --at <HH:MM>         Weekly watch time (install, default 12:00)
+
+RESTORE
+  agent-gc restore --list                  show archived batches
+  agent-gc restore latest                  restore the most recent batch
+  agent-gc restore 9b97c704                restore any batch containing "9b97c704"
+  agent-gc restore strike-api --dry-run    preview restoring a project's sessions
 `;
 
 function resolveHome(args: ReturnType<typeof parseArgs>): string {
@@ -114,11 +125,17 @@ async function commandClean(args: ReturnType<typeof parseArgs>): Promise<number>
   const prune = flagBool(args, "prune");
   const retentionDays = flagNumber(args, "days") ?? DEFAULT_RETENTION_DAYS;
   const minAgeMs = retentionDays * 86_400_000;
+  const keep = flagList(args, "keep");
   const result = await scan(env, {
     only: flagList(args, "only"),
     secrets: !flagBool(args, "no-secrets"),
   });
-  const plan = buildPlan(result.findings, { prune, now: env.now, minAgeMs });
+  const plan = buildPlan(result.findings, {
+    prune,
+    now: env.now,
+    minAgeMs,
+    ...(keep.length > 0 ? { keep } : {}),
+  });
 
   if (dryRun) {
     if (flagBool(args, "json")) {
@@ -157,6 +174,7 @@ async function commandClean(args: ReturnType<typeof parseArgs>): Promise<number>
     env,
     home,
     minAgeMs,
+    ...(keep.length > 0 ? { keep } : {}),
     ...(flagNumber(args, "max-deletes") !== undefined
       ? { maxDeletes: flagNumber(args, "max-deletes") as number }
       : {}),
@@ -187,33 +205,81 @@ async function commandClean(args: ReturnType<typeof parseArgs>): Promise<number>
 
 async function commandRestore(args: ReturnType<typeof parseArgs>): Promise<number> {
   const home = resolveHome(args);
+  const stagingRoot = path.join(stateDir(home), "tmp");
+  const dryRun = flagBool(args, "dry-run");
+  const force = flagBool(args, "force");
+
+  if (flagBool(args, "list")) {
+    const records = await listManifests(home);
+    if (records.length === 0) {
+      process.stdout.write("No archives found.\n");
+      return 0;
+    }
+    process.stdout.write("\nagent-gc · archived\n" + "─".repeat(60) + "\n");
+    for (const record of records.slice().reverse()) {
+      const items = record.manifest.entries.filter((e) => e.action === "archive");
+      const bytes = items.reduce((sum, e) => sum + e.bytes, 0);
+      process.stdout.write(
+        `  ${record.manifest.createdAt}   ${items.length} item(s)   ${formatBytes(bytes)}\n`,
+      );
+      for (const entry of items.slice(0, 5)) {
+        process.stdout.write(`    · ${entry.path.replace(home, "~")}\n`);
+      }
+      if (items.length > 5) process.stdout.write(`    … and ${items.length - 5} more\n`);
+    }
+    process.stdout.write("");
+    return 0;
+  }
+
   const target = args.positionals[0];
   if (!target) {
-    process.stderr.write("usage: agent-gc restore <manifest|latest>\n");
+    process.stderr.write(
+      "usage: agent-gc restore <manifest|latest|query> [--list] [--dry-run] [--force]\n",
+    );
     return 2;
   }
 
-  let manifestPath = target;
+  let result: { restored: string[]; skipped: { path: string; reason: string }[] };
+  let matched: number | null = null;
+
   if (target === "latest") {
-    const dir = manifestDir(home);
-    const files = (await fs.readdir(dir).catch(() => [] as string[]))
-      .filter((f) => f.endsWith(".json"))
-      .sort();
-    const newest = files[files.length - 1];
+    const records = await listManifests(home);
+    const newest = records[records.length - 1];
     if (!newest) {
       process.stderr.write("No manifests found.\n");
       return 1;
     }
-    manifestPath = path.join(dir, newest);
+    result = await restore(newest.path, { force, dryRun, stagingRoot });
+  } else if (target.endsWith(".json") || target.includes(path.sep)) {
+    result = await restore(target, { force, dryRun, stagingRoot });
+  } else {
+    const outcome = await restoreQuery(home, target, { force, dryRun, stagingRoot });
+    if (outcome.matched === 0) {
+      process.stderr.write(`No archived item matches "${target}". Try: agent-gc restore --list\n`);
+      return 1;
+    }
+    result = outcome;
+    matched = outcome.matched;
   }
 
-  const result = await restore(manifestPath, {
-    force: flagBool(args, "force"),
-    stagingRoot: path.join(stateDir(home), "tmp"),
-  });
-  process.stdout.write(`Restored ${result.restored.length} item(s).\n`);
+  if (flagBool(args, "json")) {
+    process.stdout.write(JSON.stringify({ ...result, matched, dryRun }, null, 2) + "\n");
+    return 0;
+  }
+
+  process.stdout.write(
+    `${dryRun ? "Would restore" : "Restored"} ${result.restored.length} item(s)` +
+      (matched !== null ? ` (matched ${matched})` : "") +
+      ".\n",
+  );
+  for (const p of result.restored.slice(0, 20)) {
+    process.stdout.write(`  ${p.replace(home, "~")}\n`);
+  }
+  if (result.restored.length > 20) {
+    process.stdout.write(`  … and ${result.restored.length - 20} more\n`);
+  }
   for (const skip of result.skipped) {
-    process.stdout.write(`  skipped ${skip.path} — ${skip.reason}\n`);
+    process.stdout.write(`  skipped ${skip.path.replace(home, "~")} — ${skip.reason}\n`);
   }
   return 0;
 }
@@ -296,12 +362,12 @@ async function commandDrivers(args: ReturnType<typeof parseArgs>): Promise<numbe
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2), FLAGS);
 
-  if (!args.command || flagBool(args, "help") || args.command === "help") {
-    process.stdout.write(HELP);
-    return args.command ? 0 : 0;
-  }
   if (flagBool(args, "version") || args.command === "version") {
     process.stdout.write(VERSION + "\n");
+    return 0;
+  }
+  if (!args.command || flagBool(args, "help") || args.command === "help") {
+    process.stdout.write(HELP);
     return 0;
   }
   if (args.errors.length > 0) {
