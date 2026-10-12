@@ -37,6 +37,15 @@ export { guard, desiredAction, planFindings, isProtectedPath, PRUNEABLE, DEFAULT
 export { enrichSecrets, scanFileForSecrets, scanTextForSecrets, riskFromHits, type FileScanOptions } from "./engine/secrets.js";
 export { writeTarGz, extractTarGz, safeTarget } from "./engine/archive.js";
 export { DRIVERS, getDriver } from "./drivers/registry.js";
-export { buildSchedule, type SchedulePlan } from "./triggers/schedule.js";
+export {
+  changedFiles,
+  defaultChanged,
+  gitHooksDir,
+  prePushHookScript,
+  runGuard,
+  type GuardIssue,
+  type GuardResult,
+} from "./engine/guard.js";
+export { buildSchedule, runActivation, type SchedulePlan } from "./triggers/schedule.js";
 export { renderPrompt } from "./triggers/shell.js";
 export { VERSION } from "./version.js";

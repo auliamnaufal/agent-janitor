@@ -60,7 +60,8 @@ npm install && npm run build && npm link
 | `agent-janitor scan` | Read-only survey. Sizes every store, classifies each item, and content-scans transcripts for secrets. `--json` for scripting. |
 | `agent-janitor clean` | Archives everything it acts on to a restorable tarball, after showing the receipt. `--days N` sets retention (default 30). `--prune` also deletes *regenerable* caches. |
 | `agent-janitor restore <what>` | Get archived items back: a manifest path, `latest`, `--list`, or a session-id/project **query**. `--dry-run` previews. |
-| `agent-janitor install` | Wires the recurring surfaces (shell segment, weekly digest, repo gate). |
+| `agent-janitor guard` | Repo-scoped pre-push checks: orphaned worktree registrations, staged agent artifacts, and likely secrets in changed files. `--strict` fails on warnings too. |
+| `agent-janitor install` | Emit the recurring surfaces (prompt segment, weekly `watch`); `--apply` writes and **registers** them, `--hook` also installs the pre-push gate. |
 | `agent-janitor watch` | Headless run for the scheduler. Writes the cached summary the prompt reads. |
 | `agent-janitor drivers` | Lists supported agents and whether each is detected on this machine. |
 
@@ -84,6 +85,20 @@ archive something in the first place, protect it at clean time:
 ```bash
 agent-janitor clean --keep "important-project" --keep 9b97c704
 ```
+
+## Wired into your loop
+
+`install` is what makes it *guardian* rather than a one-off:
+
+```bash
+agent-janitor install --hook --apply   # weekly watch + pre-push gate, registered
+agent-janitor guard --strict           # what the pre-push hook runs
+```
+
+- **Weekly `watch`** — registered with launchd / systemd / Task Scheduler.
+- **Pre-push gate** — flags orphaned worktree registrations, staged agent artifacts, and
+  likely secrets in the files you're about to push.
+- **Prompt segment** — `$(agent-janitor prompt)` in your shell prompt.
 
 ## Supported agents
 

@@ -11,6 +11,7 @@ interface Worktree {
   path: string;
   branch: string | null;
   head: string | null;
+  prunable: boolean;
 }
 
 export function parseWorktreePorcelain(out: string): Worktree[] {
@@ -23,14 +24,16 @@ export function parseWorktreePorcelain(out: string): Worktree[] {
     let wtPath: string | null = null;
     let branch: string | null = null;
     let head: string | null = null;
+    let prunable = false;
     for (const line of block.split("\n")) {
       if (line.startsWith("worktree ")) wtPath = line.slice("worktree ".length).trim();
       else if (line.startsWith("branch "))
         branch = line.slice("branch ".length).trim().replace("refs/heads/", "");
       else if (line.startsWith("HEAD ")) head = line.slice("HEAD ".length).trim();
       else if (line.startsWith("detached")) branch = null;
+      else if (line.startsWith("prunable")) prunable = true;
     }
-    if (wtPath) result.push({ path: wtPath, branch, head });
+    if (wtPath) result.push({ path: wtPath, branch, head, prunable });
   }
   return result;
 }

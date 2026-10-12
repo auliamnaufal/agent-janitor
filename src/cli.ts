@@ -4,7 +4,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import * as readline from "node:readline/promises";
 import { flagBool, flagList, flagNumber, flagString, parseArgs, type FlagSpec } from "./util/args.js";
-import { expandHome, readJson, writeJson } from "./util/fs.js";
+import { expandHome, exists, readJson, writeJson } from "./util/fs.js";
 import { formatBytes } from "./util/format.js";
 import { scan } from "./engine/scan.js";
 import { act, buildPlan, restore, restoreQuery } from "./engine/act.js";
@@ -14,7 +14,8 @@ import { cacheFile, stateDir } from "./engine/paths.js";
 import { DEFAULT_RETENTION_DAYS } from "./engine/safety.js";
 import { DRIVERS } from "./drivers/registry.js";
 import { renderPrompt } from "./triggers/shell.js";
-import { buildSchedule } from "./triggers/schedule.js";
+import { buildSchedule, runActivation } from "./triggers/schedule.js";
+import { changedFiles, defaultChanged, gitHooksDir, prePushHookScript, runGuard } from "./engine/guard.js";
 import type { Env, Summary } from "./engine/types.js";
 import { VERSION } from "./version.js";
 
@@ -28,6 +29,8 @@ const FLAGS: FlagSpec[] = [
   { name: "force", type: "boolean" },
   { name: "apply", type: "boolean" },
   { name: "list", type: "boolean" },
+  { name: "strict", type: "boolean" },
+  { name: "hook", type: "boolean" },
   { name: "home", type: "string" },
   { name: "root", type: "string", multiple: true },
   { name: "only", type: "string", multiple: true },
@@ -50,6 +53,7 @@ COMMANDS
   scan                 Read-only survey; prints the machine receipt
   clean                Archive safely (and optionally prune regenerable caches)
   restore <what>       Restore archived items: a manifest, "latest", or a query
+  guard                Repo-scoped pre-push checks (worktrees, artifacts, secrets)
   install              Print/emit the recurring surfaces (prompt, weekly watch)
   watch                Headless run for the scheduler; writes the cached summary
   prompt               Print the shell-prompt segment (reads cache, no scan)
@@ -63,6 +67,8 @@ OPTIONS
   --force              Overwrite existing files on restore
   --list               (restore) list archived batches and items
   --keep <substr>      (clean) never archive paths containing this (repeatable)
+  --strict             (guard) exit non-zero on warnings too
+  --hook               (install) also write the pre-push gate
   --apply              Actually write scheduler files (install)
   --home <dir>         Override home ($AGENT_GC_HOME)
   --root <dir>         Repo root to scan for worktrees (repeatable)
@@ -296,30 +302,92 @@ async function commandInstall(args: ReturnType<typeof parseArgs>): Promise<numbe
   const home = resolveHome(args);
   const binPath = process.argv[1] ?? "agent-janitor";
   const at = flagString(args, "at") ?? "12:00";
+  const apply = flagBool(args, "apply");
+  const wantHook = flagBool(args, "hook");
   const plan = buildSchedule({ home, binPath, at });
 
   process.stdout.write("\nagent-janitor · install\n" + "─".repeat(60) + "\n");
   process.stdout.write("Weekly watch:\n");
-  for (const file of plan.files) {
-    process.stdout.write(`  write  ${file.path}\n`);
-  }
+  for (const file of plan.files) process.stdout.write(`  write  ${file.path}\n`);
   process.stdout.write("Activate with:\n");
-  for (const cmd of plan.activate) {
-    process.stdout.write(`  ${cmd}\n`);
+  for (const cmd of plan.activate) process.stdout.write(`  ${cmd}\n`);
+  process.stdout.write("\nPrompt segment (add to your shell prompt):\n  $(agent-janitor prompt)\n");
+  if (wantHook) {
+    const dir = await gitHooksDir(process.cwd());
+    process.stdout.write(`\nPre-push gate:\n  write  ${path.join(dir, "pre-push")}\n`);
   }
-  process.stdout.write("\nPrompt segment (add to your shell prompt):\n");
-  process.stdout.write(`  $(agent-janitor prompt)\n`);
 
-  if (flagBool(args, "apply")) {
-    for (const file of plan.files) {
-      await fs.mkdir(path.dirname(file.path), { recursive: true });
-      await fs.writeFile(file.path, file.content, { mode: 0o644 });
-      process.stdout.write(`\nWrote ${file.path}\n`);
-    }
-    process.stdout.write("Run the activate command(s) above to enable.\n");
-  } else {
-    process.stdout.write("\n(dry) nothing written — pass --apply to emit the files.\n");
+  if (!apply) {
+    process.stdout.write("\n(dry) nothing written — pass --apply to write files and register.\n");
+    return 0;
   }
+
+  for (const file of plan.files) {
+    await fs.mkdir(path.dirname(file.path), { recursive: true });
+    await fs.writeFile(file.path, file.content, { mode: 0o644 });
+    process.stdout.write(`  wrote ${file.path}\n`);
+  }
+
+  const activation = await runActivation(plan);
+  for (const cmd of activation.ran) process.stdout.write(`  ok    ${cmd}\n`);
+  for (const err of activation.errors) process.stdout.write(`  fail  ${err}\n`);
+
+  if (wantHook) {
+    const dir = await gitHooksDir(process.cwd());
+    await fs.mkdir(dir, { recursive: true });
+    const hookPath = path.join(dir, "pre-push");
+    if (await exists(hookPath)) {
+      const existing = await fs.readFile(hookPath, "utf8").catch(() => "");
+      if (!existing.includes("agent-janitor")) {
+        process.stdout.write(`  skip  ${hookPath} (existing hook is not ours)\n`);
+        return 0;
+      }
+    }
+    await fs.writeFile(hookPath, prePushHookScript(), { mode: 0o755 });
+    process.stdout.write(`  wrote ${hookPath}\n`);
+  }
+  return 0;
+}
+
+async function readPushRefs(): Promise<{ from: string; to: string }[]> {
+  if (process.stdin.isTTY) return [];
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Buffer));
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) return [];
+  const refs: { from: string; to: string }[] = [];
+  for (const line of text.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 4 && parts[1] && parts[3]) refs.push({ from: parts[3], to: parts[1] });
+  }
+  return refs;
+}
+
+async function commandGuard(args: ReturnType<typeof parseArgs>): Promise<number> {
+  const repo = process.cwd();
+  const env = buildEnv(args, resolveHome(args));
+  const refs = await readPushRefs();
+  const changed = refs.length > 0 ? await changedFiles(repo, refs) : await defaultChanged(repo);
+  const result = await runGuard(env, { repo, changed });
+  const errors = result.issues.filter((i) => i.level === "error");
+  const warns = result.issues.filter((i) => i.level === "warn");
+
+  if (flagBool(args, "json")) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  } else {
+    process.stdout.write("\nagent-janitor · guard\n" + "─".repeat(60) + "\n");
+    if (result.issues.length === 0) {
+      process.stdout.write(`  clean — checked ${result.changed.length} changed file(s)\n`);
+    } else {
+      for (const issue of result.issues) {
+        process.stdout.write(`  ${issue.level === "error" ? "✗" : "!"} ${issue.message}\n`);
+        if (issue.hint) process.stdout.write(`      ${issue.hint}\n`);
+      }
+    }
+    process.stdout.write("");
+  }
+
+  if (errors.length > 0 || (flagBool(args, "strict") && warns.length > 0)) return 1;
   return 0;
 }
 
@@ -387,6 +455,8 @@ async function main(): Promise<number> {
       return commandClean(args);
     case "restore":
       return commandRestore(args);
+    case "guard":
+      return commandGuard(args);
     case "install":
       return commandInstall(args);
     case "watch":

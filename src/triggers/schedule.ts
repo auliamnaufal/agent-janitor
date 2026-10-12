@@ -1,4 +1,8 @@
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const exec = promisify(execFile);
 
 export interface ScheduleFile {
   path: string;
@@ -100,4 +104,28 @@ WantedBy=timers.target
       `schtasks /Create /SC WEEKLY /D MON /ST ${opts.at} /TN agent-janitor-watch /TR "${opts.binPath} watch --home ${opts.home}"`,
     ],
   };
+}
+
+export interface ActivationResult {
+  ran: string[];
+  errors: string[];
+}
+
+/** Execute a schedule's activation commands for real (used by `install --apply`). */
+export async function runActivation(
+  plan: SchedulePlan,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ActivationResult> {
+  const ran: string[] = [];
+  const errors: string[] = [];
+  for (const cmd of plan.activate) {
+    try {
+      if (platform === "win32") await exec("cmd", ["/c", cmd], { timeout: 15000 });
+      else await exec("sh", ["-c", cmd], { timeout: 15000 });
+      ran.push(cmd);
+    } catch (e) {
+      errors.push(`${cmd} — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { ran, errors };
 }

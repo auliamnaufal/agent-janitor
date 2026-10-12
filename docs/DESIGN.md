@@ -139,10 +139,11 @@ stays truthful; a batch whose archive entries are all restored removes its own t
 |---|---|---|
 | shell prompt segment | every prompt | `agent-janitor prompt` reads cached summary (no scan) |
 | weekly digest | weekly | `watch` via launchd / systemd --user / Task Scheduler |
-| repo gate | on push | `pre-push` warns on orphaned worktrees / stray agent artifacts |
+| repo gate | on push | `guard`, run from a `pre-push` hook: orphaned worktree registrations, staged agent artifacts, likely secrets (errors block the push) |
 
-`install` **prints** what it will register and writes files under `~/.agent-janitor/`; it does
-not silently modify system schedulers unless given `--apply`.
+`install` **prints** what it will register; with `--apply` it writes the files *and*
+runs the activation command (`launchctl load` / `systemctl --user enable` / `schtasks`).
+`--hook --apply` also writes `.git/hooks/pre-push` (refusing to clobber a foreign hook).
 
 ## 8. Non-goals
 
